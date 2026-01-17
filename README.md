@@ -1,2 +1,0 @@
-# mylang
-my hobby project 

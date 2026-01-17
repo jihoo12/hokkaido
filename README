@@ -1,0 +1,8 @@
+mylang
+my hobby project
+language syntax:
+indicator:[asm,return,let]
+variable declaration:
+let name value
+ex(let a 1;)
+all line must end with ;
