@@ -11,3 +11,5 @@ asm "command"
 use return block:
 return variable;
 all line must end with ;
+todo:
+make it to use DataLayout

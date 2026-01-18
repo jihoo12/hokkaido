@@ -4,11 +4,11 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
 #include <vector>
-#include <fstream>
 using namespace llvm;
 
 // --- [1. 렉서 파트] ---
@@ -65,7 +65,7 @@ static int get_token() {
     IdentifierStr = "";
     while ((LastChar = next_char()) != '"' && LastChar != EOF)
       IdentifierStr += LastChar;
-    LastChar = next_char(); // 닫는 따옴표 소비
+    LastChar = next_char();  // 닫는 따옴표 소비
     return tok_string;
   }
 
@@ -237,16 +237,29 @@ int main(int argc, char *argv[]) {
         continue;
       }
 
-      CurTok = get_token(); // 타입명 소비
+      CurTok = get_token();  // 타입명 소비
       std::string Name = IdentifierStr;
-      CurTok = get_token(); // 변수명 소비
+      CurTok = get_token();  // 변수명 소비
 
       Value *LHS = parser.ParsePrimary(Builder, CurTok, VarType);
       if (LHS) {
-        Value *FinalVal = parser.ParseBinOpRHS(0, LHS, Builder, CurTok, VarType);
+        Value *FinalVal =
+            parser.ParseBinOpRHS(0, LHS, Builder, CurTok, VarType);
         AllocaInst *Alloca = Builder.CreateAlloca(VarType, nullptr, Name);
-        Builder.CreateStore(FinalVal, Alloca);
-        parser.NamedValues[Name] = {Alloca, VarType};
+
+        // 1. Store 명령 생성
+        StoreInst *Store = Builder.CreateStore(FinalVal, Alloca);
+
+        // 2. 타입의 크기에 따라 정렬(Alignment) 값을 유동적으로 설정
+        // DataLayout을 사용하는 것이 정석이지만, 현재 구조에서는 타입 크기를
+        // 체크하여 설정합니다.
+        if (VarType->isDoubleTy() || VarType->isIntegerTy(64)) {
+          Store->setAlignment(Align(8));   // i64, double은 8바이트 정렬
+          Alloca->setAlignment(Align(8));  // Alloca도 동일하게 맞춤
+        } else {
+          Store->setAlignment(Align(4));  // i32 등은 4바이트 정렬
+          Alloca->setAlignment(Align(4));
+        }
       }
     } else if (CurTok == tok_asm) {
       parser.ParseAsm(Builder, CurTok, M);
@@ -259,7 +272,7 @@ int main(int argc, char *argv[]) {
         Builder.CreateRet(RetVal);
       }
     } else {
-      CurTok = get_token(); // 알 수 없는 토큰 건너뛰기
+      CurTok = get_token();  // 알 수 없는 토큰 건너뛰기
     }
   }
 
@@ -271,7 +284,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   M->print(dest, nullptr);
-  M->print(outs(), nullptr); // 화면에도 출력
+  M->print(outs(), nullptr);  // 화면에도 출력
 
   std::cout << "\n--- 성공: output.ll 파일이 생성되었습니다. ---" << std::endl;
   return 0;
