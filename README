@@ -6,4 +6,8 @@ variable declaration:
 let type name value
 ex(let i32 a 1;)
 type:[i32,i64,double]
+use asm block:
+asm "command"
+use return block:
+return variable;
 all line must end with ;
