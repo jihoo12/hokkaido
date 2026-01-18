@@ -1,5 +1,5 @@
 #include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/InlineAsm.h>  // 1. 필수 헤더 추가
+#include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
@@ -22,20 +22,27 @@ enum Token {
   tok_return = -7,
 };
 
+struct VariableInfo {
+  Value *Address;
+  Type *VarType;
+};
+
 static double NumVal;
 static std::string IdentifierStr;
 static int LastChar = ' ';
 
 static int get_token() {
   while (isspace(LastChar)) LastChar = getchar();
+
   if (isalpha(LastChar)) {
     IdentifierStr = LastChar;
     while (isalnum((LastChar = getchar()))) IdentifierStr += LastChar;
     if (IdentifierStr == "let") return tok_let;
-    if (IdentifierStr == "asm") return tok_asm;  // asm 키워드 체크 추가
+    if (IdentifierStr == "asm") return tok_asm;
     if (IdentifierStr == "return") return tok_return;
     return tok_identifier;
   }
+
   if (isdigit(LastChar) || LastChar == '.') {
     std::string NumStr;
     do {
@@ -45,6 +52,7 @@ static int get_token() {
     NumVal = strtod(NumStr.c_str(), nullptr);
     return tok_number;
   }
+
   if (LastChar == '"') {
     IdentifierStr = "";
     while ((LastChar = getchar()) != '"' && LastChar != EOF)
@@ -52,6 +60,7 @@ static int get_token() {
     LastChar = getchar();
     return tok_string;
   }
+
   if (LastChar == EOF) return tok_eof;
   int ThisChar = LastChar;
   LastChar = getchar();
@@ -70,106 +79,102 @@ static int GetTokPrecedence(int token) {
 
 class PARSER {
  public:
-  std::map<std::string, Value *> NamedValues;
+  std::map<std::string, VariableInfo> NamedValues;
 
-  Value *ParseNumber(IRBuilder<> &Builder, int &CurTok);
-  Value *ParsePrimary(IRBuilder<> &Builder, int &CurTok);
-  Value *ParseBinOpRHS(int ExprPrec, Value *LHS, IRBuilder<> &Builder,
-                       int &CurTok);
-  // 2. 클래스 내부 선언에서 PARSER:: 제거
-  Value *ParseAsm(IRBuilder<> &Builder, int &CurTok, Module *M);
-};
-
-Value *PARSER::ParseNumber(IRBuilder<> &Builder, int &CurTok) {
-  Value *V = Builder.getInt32((int)NumVal);
-  CurTok = get_token();
-  return V;
-}
-
-Value *PARSER::ParsePrimary(IRBuilder<> &Builder, int &CurTok) {
-  if (CurTok == tok_number) {
-    return ParseNumber(Builder, CurTok);
-  } else if (CurTok == tok_identifier) {
-    std::string Name = IdentifierStr;
-    CurTok = get_token();
-    Value *V = NamedValues[Name];
-    if (!V) {
-      std::cerr << "오류: 알 수 없는 변수 이름 " << Name << std::endl;
-      return nullptr;
-    }
-    return Builder.CreateLoad(Builder.getInt32Ty(), V, Name.c_str());
-  }
-  return nullptr;
-}
-
-Value *PARSER::ParseBinOpRHS(int ExprPrec, Value *LHS, IRBuilder<> &Builder,
-                             int &CurTok) {
-  while (true) {
-    int TokPrec = GetTokPrecedence(CurTok);
-    if (TokPrec < ExprPrec) return LHS;
-
-    int BinOp = CurTok;
-    CurTok = get_token();
-    Value *RHS = ParsePrimary(Builder, CurTok);
-
-    int NextPrec = GetTokPrecedence(CurTok);
-    if (TokPrec < NextPrec) {
-      RHS = ParseBinOpRHS(TokPrec + 1, RHS, Builder, CurTok);
-    }
-
-    if (BinOp == '+')
-      LHS = Builder.CreateAdd(LHS, RHS, "addtmp");
-    else if (BinOp == '-')
-      LHS = Builder.CreateSub(LHS, RHS, "subtmp");
-    else if (BinOp == '*')
-      LHS = Builder.CreateMul(LHS, RHS, "multmp");
-  }
-}
-
-Value *PARSER::ParseAsm(IRBuilder<> &Builder, int &CurTok, Module *M) {
-  CurTok = get_token();  // asm 건너뛰기
-  if (CurTok != tok_string) {
-    std::cerr << "오류: asm 뒤에는 문자열이 와야 합니다." << std::endl;
+  Type *getLLVMType(std::string TypeName, LLVMContext &Context) {
+    if (TypeName == "i32") return Type::getInt32Ty(Context);
+    if (TypeName == "i64") return Type::getInt64Ty(Context);
+    if (TypeName == "double") return Type::getDoubleTy(Context);
     return nullptr;
   }
 
-  std::string AsmCode = IdentifierStr;
-  CurTok = get_token();  // 문자열 소비
-
-  std::vector<Value *> Args;
-  std::string Constraints = "";
-
-  // 만약 '(' 가 온다면 인자가 있다는 뜻
-  if (CurTok == '(') {
-    CurTok = get_token();  // '(' 소비
-    if (CurTok == tok_identifier) {
-      std::string VarName = IdentifierStr;
-      Value *V = NamedValues[VarName];
-      if (V) {
-        // 변수의 값을 로드해서 Args에 추가
-        Value *LoadedVal =
-            Builder.CreateLoad(Builder.getInt32Ty(), V, VarName.c_str());
-        Args.push_back(LoadedVal);
-        Constraints = "r";  // "r"은 이 값을 레지스터에 넣어서 전달하라는 뜻
-      }
-      CurTok = get_token();  // 변수명 소비
+  Value *ParseNumber(IRBuilder<> &Builder, int &CurTok, Type *ExpectedType) {
+    Value *V;
+    if (ExpectedType && ExpectedType->isDoubleTy()) {
+      V = ConstantFP::get(ExpectedType, NumVal);
+    } else if (ExpectedType && ExpectedType->isIntegerTy(64)) {
+      V = ConstantInt::get(ExpectedType, (int64_t)NumVal);
+    } else {
+      V = ConstantInt::get(ExpectedType ? ExpectedType : Builder.getInt32Ty(), (int32_t)NumVal);
     }
-    if (CurTok == ')') CurTok = get_token();  // ')' 소비
+    CurTok = get_token();
+    return V;
   }
 
-  // 인자들의 타입 리스트 생성
-  std::vector<Type *> ArgTypes;
-  for (Value *Arg : Args) ArgTypes.push_back(Arg->getType());
+  Value *ParsePrimary(IRBuilder<> &Builder, int &CurTok, Type *ExpectedType) {
+    if (CurTok == tok_number) {
+      return ParseNumber(Builder, CurTok, ExpectedType);
+    } else if (CurTok == tok_identifier) {
+      std::string Name = IdentifierStr;
+      CurTok = get_token();
+      if (NamedValues.find(Name) == NamedValues.end()) {
+        std::cerr << "오류: 알 수 없는 변수 " << Name << std::endl;
+        return nullptr;
+      }
+      VariableInfo info = NamedValues[Name];
+      return Builder.CreateLoad(info.VarType, info.Address, Name.c_str());
+    }
+    return nullptr;
+  }
 
-  // 함수 타입 정의 (리턴 void, 인자들 타입)
-  FunctionType *FT = FunctionType::get(Builder.getVoidTy(), ArgTypes, false);
+  Value *ParseBinOpRHS(int ExprPrec, Value *LHS, IRBuilder<> &Builder, int &CurTok, Type *ExpectedType) {
+    while (true) {
+      int TokPrec = GetTokPrecedence(CurTok);
+      if (TokPrec < ExprPrec) return LHS;
 
-  // InlineAsm 객체 생성 (Constraints 적용)
-  InlineAsm *IA = InlineAsm::get(FT, AsmCode, Constraints, true);
+      int BinOp = CurTok;
+      CurTok = get_token();
+      Value *RHS = ParsePrimary(Builder, CurTok, ExpectedType);
 
-  // 호출 생성 (인자 Args 전달)
-  return Builder.CreateCall(FT, IA, Args);
-}
+      int NextPrec = GetTokPrecedence(CurTok);
+      if (TokPrec < NextPrec) {
+        RHS = ParseBinOpRHS(TokPrec + 1, RHS, Builder, CurTok, ExpectedType);
+      }
+
+      // 타입에 따른 연산자 분기 (정수 vs 실수)
+      bool isDouble = ExpectedType && ExpectedType->isDoubleTy();
+      if (BinOp == '+')
+        LHS = isDouble ? Builder.CreateFAdd(LHS, RHS, "addtmp") : Builder.CreateAdd(LHS, RHS, "addtmp");
+      else if (BinOp == '-')
+        LHS = isDouble ? Builder.CreateFSub(LHS, RHS, "subtmp") : Builder.CreateSub(LHS, RHS, "subtmp");
+      else if (BinOp == '*')
+        LHS = isDouble ? Builder.CreateFMul(LHS, RHS, "multmp") : Builder.CreateMul(LHS, RHS, "multmp");
+    }
+  }
+
+  Value *ParseAsm(IRBuilder<> &Builder, int &CurTok, Module *M) {
+    CurTok = get_token(); 
+    if (CurTok != tok_string) return nullptr;
+
+    std::string AsmCode = IdentifierStr;
+    CurTok = get_token(); 
+
+    std::vector<Value *> Args;
+    std::string Constraints = "";
+
+    if (CurTok == '(') {
+      CurTok = get_token(); 
+      if (CurTok == tok_identifier) {
+        std::string VarName = IdentifierStr;
+        if (NamedValues.count(VarName)) {
+          VariableInfo &info = NamedValues[VarName];
+          Value *LoadedVal = Builder.CreateLoad(info.VarType, info.Address, VarName.c_str());
+          Args.push_back(LoadedVal);
+          Constraints = "r";
+        }
+        CurTok = get_token();
+      }
+      if (CurTok == ')') CurTok = get_token();
+    }
+
+    std::vector<Type *> ArgTypes;
+    for (Value *Arg : Args) ArgTypes.push_back(Arg->getType());
+    FunctionType *FT = FunctionType::get(Builder.getVoidTy(), ArgTypes, false);
+    InlineAsm *IA = InlineAsm::get(FT, AsmCode, Constraints, true);
+    return Builder.CreateCall(FT, IA, Args);
+  }
+};
+
 // --- [3. 메인 엔진] ---
 int main() {
   BinopPrecedence['+'] = 20;
@@ -186,7 +191,7 @@ int main() {
   BasicBlock *BB = BasicBlock::Create(Context, "entry", MainFn);
   Builder.SetInsertPoint(BB);
 
-  std::cout << "MyCoollang REPL (Ctrl+D 또는 'exit' 입력 시 종료)" << std::endl;
+  std::cout << "MyCoollang REPL (Ctrl+D 종료)" << std::endl;
 
   while (true) {
     std::cout << "ready> ";
@@ -195,35 +200,49 @@ int main() {
 
     if (CurTok == tok_let) {
       CurTok = get_token();
-      std::string Name = IdentifierStr;
-      CurTok = get_token();
-      Value *LHS = parser.ParsePrimary(Builder, CurTok);
-      if (!LHS) continue;
-      Value *FinalVal = parser.ParseBinOpRHS(0, LHS, Builder, CurTok);
-      AllocaInst *Alloca =
-          Builder.CreateAlloca(Builder.getInt32Ty(), nullptr, Name);
-      Builder.CreateStore(FinalVal, Alloca);
-      parser.NamedValues[Name] = Alloca;
-      std::cout << "Defined variable: " << Name << std::endl;
-    } else if (CurTok == tok_asm) {
-      parser.ParseAsm(Builder, CurTok, M);
-      std::cout << "Inline ASM block added." << std::endl;
-    } else if (CurTok == tok_return) {
-      CurTok = get_token();  // return 건너뛰기
-
-      // 뒤에 오는 수식(예: a + 5) 파싱
-      Value *LHS = parser.ParsePrimary(Builder, CurTok);
-      if (LHS) {
-        Value *RetVal = parser.ParseBinOpRHS(0, LHS, Builder, CurTok);
-        Builder.CreateRet(RetVal);  // 사용자 정의 값으로 return 생성
-        std::cout << "Return statement added." << std::endl;
+      std::string TypeName = IdentifierStr;
+      Type *VarType = parser.getLLVMType(TypeName, Context);
+      
+      if (!VarType) {
+        std::cerr << "오류: 알 수 없는 타입 " << TypeName << std::endl;
+        continue;
       }
-    } else {
+
+      CurTok = get_token(); // 타입명 소비
+      std::string Name = IdentifierStr;
+      CurTok = get_token(); // 변수명 소비
+
+      Value *LHS = parser.ParsePrimary(Builder, CurTok, VarType);
+      if (LHS) {
+        Value *FinalVal = parser.ParseBinOpRHS(0, LHS, Builder, CurTok, VarType);
+        AllocaInst *Alloca = Builder.CreateAlloca(VarType, nullptr, Name);
+        Builder.CreateStore(FinalVal, Alloca);
+        parser.NamedValues[Name] = {Alloca, VarType};
+        std::cout << "변수 정의됨: " << Name << " (" << TypeName << ")" << std::endl;
+      }
+    } 
+    else if (CurTok == tok_asm) {
+      parser.ParseAsm(Builder, CurTok, M);
+      std::cout << "인라인 ASM 추가됨." << std::endl;
+    } 
+    else if (CurTok == tok_return) {
+      CurTok = get_token();
+      Type *RetType = Builder.getInt32Ty(); // main 함수 반환 타입
+      Value *LHS = parser.ParsePrimary(Builder, CurTok, RetType);
+      if (LHS) {
+        Value *RetVal = parser.ParseBinOpRHS(0, LHS, Builder, CurTok, RetType);
+        Builder.CreateRet(RetVal);
+        std::cout << "Return 문 추가됨." << std::endl;
+      }
+    } 
+    else {
       if (IdentifierStr == "exit") break;
-      // 알 수 없는 문자는 그냥 건너뜀 (예: 세미콜론)
+      // 토큰을 소비하지 않으면 무한 루프에 빠질 수 있으므로 다음 토큰을 읽음
+      if (CurTok != tok_eof) CurTok = get_token();
     }
   }
-  std::cout << "\n--- 최종 생성된 LLVM IR ---" << std::endl;
+
+  std::cout << "\n--- 생성된 LLVM IR ---" << std::endl;
   M->print(outs(), nullptr);
   return 0;
 }
