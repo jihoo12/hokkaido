@@ -241,8 +241,6 @@ int main(int argc, char *argv[]) {
     int CurTok = L.get_token();
     while (CurTok != tok_eof) {
         if (CurTok == tok_let) {
-            // ... (기존 let 파싱 및 codegen 로직) ...
-            // PreferredAlign = DL.getPrefTypeAlign(VarType); 사용 부분 포함
             CurTok = L.get_token(); // Type
             Type *VarType = P.getLLVMType(L.IdentifierStr, Context);
             CurTok = L.get_token(); // Name
