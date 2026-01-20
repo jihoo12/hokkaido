@@ -51,13 +51,16 @@ Value *createCast(IRBuilder<> &Builder, Value *Val, Type *DestTy) {
   return Val;
 }
 
-std::unique_ptr<ExprAST> LogError(const char *Str) {
-  std::cerr << "Error: " << Str << std::endl;
+std::unique_ptr<ExprAST> LogError(const char *Str, int Line = -1) {
+  std::cerr << "Error: " << Str;
+  if (Line != -1)
+    std::cerr << " (Line: " << Line << ")";
+  std::cerr << std::endl;
   return nullptr;
 }
 
-Value *LogErrorV(const char *Str) {
-  LogError(Str);
+Value *LogErrorV(const char *Str, int Line = -1) {
+  LogError(Str, Line);
   return nullptr;
 }
 
@@ -106,8 +109,29 @@ public:
       : FileContent(std::move(content)), CurrentPos(0), LastChar(' ') {}
 
   int get_token() {
-    while (isspace(LastChar))
+    while (isspace(LastChar)) {
+      if (LastChar == '\n') {
+        // Already handled in next_char, but good to ensure we skip empty lines
+      }
       LastChar = next_char();
+    }
+
+    // Handle comments: # or //
+    if (LastChar == '#' || (LastChar == '/' && HasNext('/'))) {
+      // For simplistic single char lookahead regarding comments,
+      // let's stick to '#' for now as easy comment, or handle '/' carefully
+      // Implementation for '#' comment:
+      do {
+        LastChar = next_char();
+      } while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
+
+      if (LastChar != EOF)
+        return get_token(); // Return next token
+    }
+
+    // Check for C++ style comment // if strictly required, but usually needs
+    // peek. Let's implement simple peek or just accept '#' for this language as
+    // comment
 
     if (isalpha(LastChar)) {
       IdentifierStr = LastChar;
@@ -157,6 +181,14 @@ public:
 
   int getLine() const { return Line; }
   int getCol() const { return Col; }
+
+  // Simple peek functionality could be added but for now relying on single char
+  // lookahead helpers
+  bool HasNext(char Check) {
+    if (CurrentPos >= FileContent.size())
+      return false;
+    return FileContent[CurrentPos] == Check;
+  }
 
 private:
   std::string FileContent;
@@ -354,11 +386,11 @@ public:
       if (!V)
         return nullptr;
       if (CurTok != ')')
-        return LogError("expected ')'");
+        return LogError("expected ')'", L.getLine());
       CurTok = L.get_token();
       return V;
     }
-    return LogError("Unknown token when expecting an expression");
+    return LogError("Unknown token when expecting an expression", L.getLine());
   }
 
   std::unique_ptr<ExprAST> ParseBinOpRHS(Lexer &L, int ExprPrec,
@@ -434,6 +466,75 @@ public:
 
 // --- [4. Compiler Engine] ---
 
+// Handlers
+bool HandleLet(Lexer &L, Parser &P, IRBuilder<> &Builder, Function &MainFn,
+               std::map<std::string, VariableInfo> &NamedValues,
+               const DataLayout &DL, LLVMContext &Context, int &CurTok) {
+  // let <Type> <Name> = <Expr>
+  CurTok = L.get_token(); // eat let
+  std::string TypeName = L.IdentifierStr;
+  Type *VarType = P.getLLVMType(TypeName, Context);
+  if (!VarType) {
+    LogErrorV(("Unknown type '" + TypeName + "'").c_str(), L.getLine());
+    return false;
+  }
+
+  CurTok = L.get_token();                // eat Type
+  std::string VarName = L.IdentifierStr; // Name
+
+  CurTok = L.get_token(); // eat Name
+  if (CurTok != '=') {
+    LogErrorV("Expected '=' after variable name", L.getLine());
+    return false;
+  }
+  CurTok = L.get_token(); // eat =
+
+  auto Expr = P.ParseExpression(L, CurTok);
+  if (Expr) {
+    Value *Val = Expr->codegen(Builder, NamedValues, DL);
+    if (!Val)
+      return false;
+
+    // Critical Fix: Explicit Cast
+    Val = createCast(Builder, Val, VarType);
+
+    AllocaInst *Alloca =
+        Parser::CreateEntryBlockAlloca(&MainFn, VarName, VarType);
+    Align PreferredAlign = DL.getPrefTypeAlign(VarType);
+    Alloca->setAlignment(PreferredAlign);
+    Builder.CreateStore(Val, Alloca)->setAlignment(PreferredAlign);
+    NamedValues[VarName] = {Alloca, VarType};
+  }
+  return true;
+}
+
+bool HandleAsm(Lexer &L, Parser &P, IRBuilder<> &Builder,
+               std::map<std::string, VariableInfo> &NamedValues,
+               const DataLayout &DL, int &CurTok) {
+  auto AsmAST = P.ParseAsm(L, CurTok);
+  if (AsmAST) {
+    Value *V = AsmAST->codegen(Builder, NamedValues, DL);
+    return V != nullptr;
+  }
+  return false;
+}
+
+bool HandleReturn(Lexer &L, Parser &P, IRBuilder<> &Builder,
+                  std::map<std::string, VariableInfo> &NamedValues,
+                  const DataLayout &DL, int &CurTok, bool &HasReturn) {
+  CurTok = L.get_token();
+  auto Expr = P.ParseExpression(L, CurTok);
+  if (Expr) {
+    Value *retVal = Expr->codegen(Builder, NamedValues, DL);
+    // main always returns i32 in this toy lang
+    retVal = createCast(Builder, retVal, Builder.getInt32Ty());
+    Builder.CreateRet(retVal);
+    HasReturn = true;
+    return true;
+  }
+  return false;
+}
+
 bool CompileModule(Lexer &L, Parser &P, IRBuilder<> &Builder, Function &MainFn,
                    std::map<std::string, VariableInfo> &NamedValues,
                    const DataLayout &DL, LLVMContext &Context) {
@@ -442,60 +543,16 @@ bool CompileModule(Lexer &L, Parser &P, IRBuilder<> &Builder, Function &MainFn,
 
   while (CurTok != tok_eof) {
     if (CurTok == tok_let) {
-      // let <Type> <Name> = <Expr>
-      CurTok = L.get_token(); // eat let
-      std::string TypeName = L.IdentifierStr;
-      Type *VarType = P.getLLVMType(TypeName, Context);
-      if (!VarType) {
-        std::cerr << "Error: Unknown type '" << TypeName << "' around line "
-                  << L.getLine() << std::endl;
+      if (!HandleLet(L, P, Builder, MainFn, NamedValues, DL, Context, CurTok))
         return false;
-      }
-
-      CurTok = L.get_token();                // eat Type
-      std::string VarName = L.IdentifierStr; // Name
-
-      CurTok = L.get_token(); // eat Name
-      if (CurTok != '=') {
-        std::cerr << "Error: Expected '=' after variable name around line "
-                  << L.getLine() << std::endl;
-        return false;
-      }
-      CurTok = L.get_token(); // eat =
-
-      auto Expr = P.ParseExpression(L, CurTok);
-      if (Expr) {
-        Value *Val = Expr->codegen(Builder, NamedValues, DL);
-        if (!Val)
-          return false;
-
-        // Critical Fix: Explicit Cast
-        Val = createCast(Builder, Val, VarType);
-
-        AllocaInst *Alloca =
-            Parser::CreateEntryBlockAlloca(&MainFn, VarName, VarType);
-        Align PreferredAlign = DL.getPrefTypeAlign(VarType);
-        Alloca->setAlignment(PreferredAlign);
-        Builder.CreateStore(Val, Alloca)->setAlignment(PreferredAlign);
-        NamedValues[VarName] = {Alloca, VarType};
-      }
     } else if (CurTok == tok_asm) {
-      auto AsmAST = P.ParseAsm(L, CurTok);
-      if (AsmAST) {
-        AsmAST->codegen(Builder, NamedValues, DL);
-      }
+      if (!HandleAsm(L, P, Builder, NamedValues, DL, CurTok))
+        return false;
       if (CurTok == ';')
         CurTok = L.get_token();
     } else if (CurTok == tok_return) {
-      CurTok = L.get_token();
-      auto Expr = P.ParseExpression(L, CurTok);
-      if (Expr) {
-        Value *retVal = Expr->codegen(Builder, NamedValues, DL);
-        // main always returns i32 in this toy lang
-        retVal = createCast(Builder, retVal, Builder.getInt32Ty());
-        Builder.CreateRet(retVal);
-        HasReturn = true;
-      }
+      if (!HandleReturn(L, P, Builder, NamedValues, DL, CurTok, HasReturn))
+        return false;
     } else {
       // Ignore unknown tokens or handle errors
       CurTok = L.get_token();
