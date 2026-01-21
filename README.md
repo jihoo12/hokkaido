@@ -69,25 +69,73 @@ let i32 b = 20
 return a + b
 ```
 
-## 5. Inline Assembly
+## 5. Control Flow
+
+The language supports basic jumping and conditional branching.
+
+### Labels
+Define a jump target using the `label` keyword.
+
+```
+label my_target
+```
+
+### Comparison
+Use `cmp` to compare two values. This sets the internal comparison flag used by branches.
+
+```
+cmp <a>, <b>
+```
+This computes `a - b`. If the result is **non-zero** (i.e., `a != b`), the flag is set.
+
+### Branching
+Use `br` to conditionally jump to a label.
+
+```
+br <label_name>
+```
+The jump occurs **only if** the result of the last `cmp` was **not equal to zero**. If `cmp` resulted in zero (equality), execution falls through to the next instruction.
+
+**Example (Loop-like structure):**
+```
+let i32 x = 10
+label start
+cmp x, 0        // Compare x with 0
+br end          // If x != 0, jump to 'end' (Wait, logic is: if diff != 0 jump. So if x=10, diff=10, jumps.)
+                // Note: The logic is currently "Jump if Not Equal".
+```
+*(Note: The current implementation of `br` jumps if the comparison result is **non-zero**.)*
+
+## 6. Inline Assembly
 
 You can execute inline LLVM assembly strings and pass variables as operands.
-We follow **GCC-style syntax** for clarity.
+We follow **GCC-style syntax**.
 
 ```
 asm "assembly_code", arg1, arg2, ...
 ```
 
-### Syntax Rules
-- **Variables (Operands)**: Use `%0`, `%1`, etc.
-- **Constants (Immediates)**: Use `$` (e.g., `$10`).
-- **Registers**: Use normal register names (e.g., `%eax`).
+### Important: Pass-by-Reference
+Variables passed to the `asm` block are passed by **address (pointer)**.
+To modify a variable, you must **dereference** the register.
+
+- `%0`, `%1`: Registers holding the **pointers** to your variables.
+- `(%0)`: Accessing the **value** at that pointer.
+
+### Ambiguity & Suffixes
+Because you are accessing memory directly, you **must use explicit instruction suffixes** (like `l` for long/4-byte) to tell the assembler the size of the operation.
+
+- `movl`: Move 4 bytes (for `i32`)
+- `movq`: Move 8 bytes (for `i64`)
 
 **Example:**
 ```
 let i32 val = 10
-// Move constant 20 into variable %0 (which corresponds to 'val')
-asm "mov $20, %0", val
+
+// Correct: Move immediate 20 into the memory address at %0 using 4-byte move
+asm "movl $20, (%0)", val
+
+return val // Returns 20
 ```
 
-This is automatically converted to LLVM's internal format by the compiler.
+This passes the *address* of `val` to the assembly snippet. The instruction `movl $20, (%0)` writes the value 20 to that address.

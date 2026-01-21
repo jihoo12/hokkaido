@@ -1,0 +1,61 @@
+# MyLang Comprehensive Test
+# This script specifically tests all major features of the language.
+
+# --- 1. Types & Arithmetic ---
+let i32 a = 10
+let double b = 5.5
+let i64 large = 1000
+
+# Test Arithmetic + Implicit Casting
+# b (5.5) becomes 5 when assigned to i32
+let i32 casted = b 
+
+# (10 + 5) = 15
+let i32 initial_sum = a + casted
+
+# --- 2. Control Flow & Inline Assembly ---
+# We will calculate the sum of numbers from 1 to 5 using a loop.
+# Algorithm:
+# i = 5
+# result = 0
+# while (i != 0) {
+#   result += i
+#   i--
+# }
+# Expected Result: 5+4+3+2+1 = 15
+
+let i32 i = 5
+let i32 result = 0
+
+label loop_start
+
+# Condition: if i != 0, jump to body
+cmp i, 0
+br loop_body
+
+# Exit: if i == 0, we fall through here.
+return result
+
+label loop_body
+# ASM: Add i to result
+# uses x86 add instruction: addl src, dest
+# %1 is address of i, %0 is address of result.
+# We need to dereference %1 to get value of i: (%1) NO, asm operands are registers containing pointers.
+# Wait, inline asm inputs "r" passes the POINTER in a register.
+# To add value of i to value of result:
+# We need to move value of i into a temp register first?
+# Or: movl (%1), %eax; addl %eax, (%0)
+# Let's try to keep it simple. x86 allows memory-to-memory? No.
+# We need a scratch register or to load one into a register.
+# But `asm` string is opaque.
+# Let's use a REGISTER constraint for input `i`? No, compiler only passes references now.
+# So we must load:
+asm "movl (%1), %r10d; addl %r10d, (%0)", result, i
+
+# ASM: Decrement i
+# subl $1, (%0)
+asm "subl $1, (%0)", i
+
+# Unconditional jump back to start
+cmp 1, 0   # 1 != 0, so br will jump
+br loop_start
