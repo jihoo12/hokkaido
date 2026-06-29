@@ -1,0 +1,28 @@
+at main.cpp line 754~772
+754  // Demo 3: Cubical with recursive computation
+755  {
+756    std::cout << "--- Demo 3: Cubical recursive computation ---\n";
+757    std::string src =
+758      "let cubical fact6 = \"data Nat = | zero : Nat | suc : Nat -> Nat\n"
+759      "def plus : Nat -> Nat -> Nat = \\m n. elim (\\_. Nat) {\n"
+760      "  | zero => n\n"
+761      "  | suc m' => suc (plus m' n)\n"
+762      "} m\n"
+763      "def mul : Nat -> Nat -> Nat = \\m n. elim (\\_. Nat) {\n"
+764      "  | zero => zero\n"
+765      "  | suc m' => plus n (mul m' n)\n"
+766      "} m\n"
+767      "def fact : Nat -> Nat = \\n. elim (\\_. Nat) {\n"
+768      "  | zero => suc zero\n"
+769      "  | suc n' => mul (suc n') (fact n')\n"
+770      "} n\n"
+771      "def main : Nat = fact (suc (suc (suc zero)))\"\n"
+772      "print fact6\n";
+
+error massage
+--- Demo 3: Cubical recursive computation ---
+Error: cubical evaluation failed for 'fact6'
+
+related files
+main.cpp
+src/cubical/*

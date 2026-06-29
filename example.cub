@@ -1,0 +1,18 @@
+data Nat = | zero : Nat | suc : Nat -> Nat
+
+def plus : Nat -> Nat -> Nat = \m n. elim (\_. Nat) {
+  | zero => n
+  | suc m' => suc (plus m' n)
+} m
+
+def mul : Nat -> Nat -> Nat = \m n. elim (\_. Nat) {
+  | zero => zero
+  | suc m' => plus n (mul m' n)
+} m
+
+def fact : Nat -> Nat = \n. elim (\_. Nat) {
+  | zero => suc zero
+  | suc n' => mul (suc n') (fact n')
+} n
+
+def main : Nat = fact (suc (suc (suc zero)))

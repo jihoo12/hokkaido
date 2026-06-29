@@ -1,0 +1,10 @@
+[package]
+name = "cubical"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "cubical_c"
+crate-type = ["staticlib"]
+
+[dependencies]

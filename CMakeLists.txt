@@ -22,6 +22,26 @@ llvm_map_components_to_libnames(llvm_libs
     ${LLVM_TARGETS_TO_BUILD}
 )
 
+# Build the Rust cubical library as a static library
+set(CUBICAL_LIB "${CMAKE_SOURCE_DIR}/target/release/libcubical_c.a")
+
+# Custom target to build the Rust library
+add_custom_target(cubical_lib ALL
+    COMMAND cargo build --release
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Building cubical Rust library..."
+    BYPRODUCTS ${CUBICAL_LIB}
+)
+
 add_executable(my_compiler main.cpp)
 
-target_link_libraries(my_compiler PRIVATE ${llvm_libs})
+# Add dependency on the cubical library
+add_dependencies(my_compiler cubical_lib)
+
+target_link_libraries(my_compiler PRIVATE
+    ${llvm_libs}
+    ${CUBICAL_LIB}
+    pthread
+    dl
+    m
+)
