@@ -11,7 +11,7 @@ enum class TokenType {
   Let, Fn, Return, Asm, If, Else, For, Struct,
   Null,
   Cubical,
-  Int8, Int32, Int64, Float, Bool, String, Void,
+  Int8, Int32, Int64, Float16, Float32, Float64, Bool, String, Void,
   Identifier,
   Number, True, False,
   StringLiteral,

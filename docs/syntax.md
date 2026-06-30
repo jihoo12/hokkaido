@@ -13,7 +13,10 @@ int8        8-bit signed integer
 int32       32-bit signed integer
 int64       64-bit signed integer
 int         Shorthand for int64
-float       64-bit floating point
+float16     16-bit floating point (half)
+float32     32-bit floating point
+float64     64-bit floating point
+float       Shorthand for float64
 string      String (internal)
 void        No return value (functions only)
 bool        true or false
@@ -35,7 +38,10 @@ let a: int8 = 1             8-bit integer variable
 let b: int32 = 2            32-bit integer variable
 let c: int64 = 42           64-bit integer variable
 let d: int = 42             Shorthand for int64
-let y: float = 3.14         Float variable
+let e: float16 = 1.0        16-bit float variable
+let f: float32 = 2.0        32-bit float variable
+let g: float64 = 3.14       64-bit float variable
+let h: float = 3.14         Shorthand for float64
 let s: string = "hello"     String variable
 let p: int64* = &c          Pointer variable (address of c)
 let b: bool = true          true

@@ -62,8 +62,14 @@ TypeAnnotation Parser::parse_type_annotation() {
   } else if (cur_tok.type == TokenType::Int64) {
     ann = {TypeKind::Int64};
     next_token();
-  } else if (cur_tok.type == TokenType::Float) {
-    ann = {TypeKind::Float};
+  } else if (cur_tok.type == TokenType::Float16) {
+    ann = {TypeKind::Float16};
+    next_token();
+  } else if (cur_tok.type == TokenType::Float32) {
+    ann = {TypeKind::Float32};
+    next_token();
+  } else if (cur_tok.type == TokenType::Float64) {
+    ann = {TypeKind::Float64};
     next_token();
   } else if (cur_tok.type == TokenType::Bool) {
     ann = {TypeKind::Bool};

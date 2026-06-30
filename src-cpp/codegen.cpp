@@ -24,7 +24,9 @@ Type *CodeGen::get_llvm_type(TypeKind kind) {
     case TypeKind::Int8:    return Type::getInt8Ty(Context);
     case TypeKind::Int32:   return Type::getInt32Ty(Context);
     case TypeKind::Int64:   return Type::getInt64Ty(Context);
-    case TypeKind::Float:   return Type::getDoubleTy(Context);
+    case TypeKind::Float16: return Type::getHalfTy(Context);
+    case TypeKind::Float32: return Type::getFloatTy(Context);
+    case TypeKind::Float64: return Type::getDoubleTy(Context);
     case TypeKind::Bool:    return Type::getInt1Ty(Context);
     case TypeKind::String:  return PointerType::getUnqual(Context);
     case TypeKind::Cubical: return Type::getInt64Ty(Context);
@@ -204,7 +206,7 @@ bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
 
 Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   if (auto *num = dynamic_cast<NumberExpr *>(expr)) {
-    if (expected_type->isDoubleTy())
+    if (expected_type->isFPOrFPVectorTy())
       return ConstantFP::get(expected_type, num->value);
     return ConstantInt::get(expected_type, (int64_t)num->value);
   }
@@ -334,7 +336,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   if (auto *un = dynamic_cast<UnaryExpr *>(expr)) {
     Value *op = eval_expr(un->operand.get(), expected_type);
     if (!op) return nullptr;
-    if (expected_type->isDoubleTy())
+    if (expected_type->isFPOrFPVectorTy())
       return Builder.CreateFNeg(op);
     return Builder.CreateNeg(op);
   }
@@ -344,7 +346,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     Value *r = eval_expr(bin->right.get(), expected_type);
     if (!l || !r) return nullptr;
 
-    bool is_float = expected_type->isDoubleTy();
+    bool is_float = expected_type->isFPOrFPVectorTy();
     switch (bin->op) {
       case BinOp::Add: return is_float ? Builder.CreateFAdd(l, r) : Builder.CreateAdd(l, r);
       case BinOp::Sub: return is_float ? Builder.CreateFSub(l, r) : Builder.CreateSub(l, r);
@@ -594,7 +596,7 @@ Value *CodeGen::eval_array_literal(ArrayLitExpr *arr, ArrayType *array_type) {
   for (size_t i = 0; i < arr->elements.size() && i < num_elems; i++) {
     // For constants, try to get a Constant value directly
     if (auto *num = dynamic_cast<NumberExpr *>(arr->elements[i].get())) {
-      if (elem_type->isDoubleTy())
+      if (elem_type->isFPOrFPVectorTy())
         init_vals.push_back(ConstantFP::get(elem_type, num->value));
       else
         init_vals.push_back(ConstantInt::get(elem_type, (int64_t)num->value));
@@ -680,7 +682,13 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
     case TypeKind::Int64:
       init = eval_int_init(decl->init_expr.get());
       break;
-    case TypeKind::Float:
+    case TypeKind::Float16:
+      init = eval_expr(decl->init_expr.get(), Type::getHalfTy(Context));
+      break;
+    case TypeKind::Float32:
+      init = eval_expr(decl->init_expr.get(), Type::getFloatTy(Context));
+      break;
+    case TypeKind::Float64:
       init = eval_float_init(decl->init_expr.get());
       break;
     case TypeKind::Bool:
@@ -740,7 +748,13 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
     case TypeKind::Int64:
       init = eval_int_init(stmt->init_expr.get());
       break;
-    case TypeKind::Float:
+    case TypeKind::Float16:
+      init = eval_expr(stmt->init_expr.get(), Type::getHalfTy(Context));
+      break;
+    case TypeKind::Float32:
+      init = eval_expr(stmt->init_expr.get(), Type::getFloatTy(Context));
+      break;
+    case TypeKind::Float64:
       init = eval_float_init(stmt->init_expr.get());
       break;
     case TypeKind::Bool:
@@ -800,7 +814,7 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
       Builder.CreateRetVoid();
     else if (ret_type->isIntegerTy(64))
       Builder.CreateRet(ConstantInt::get(ret_type, 0));
-    else if (ret_type->isDoubleTy())
+    else if (ret_type->isFPOrFPVectorTy())
       Builder.CreateRet(ConstantFP::get(ret_type, 0.0));
     else
       Builder.CreateRet(ConstantPointerNull::get(cast<PointerType>(ret_type)));
