@@ -657,6 +657,23 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
         Value *cmp = Builder.CreateICmpSGE(l, r);
         return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
       }
+      case BinOp::And: {
+        // Non-short-circuiting: both sides are always evaluated, same as
+        // every other binary operator here. Truthiness follows the same
+        // "nonzero" rule used for `if` conditions.
+        Value *lb = Builder.CreateICmpNE(l, ConstantInt::get(l->getType(), 0));
+        Value *rb = Builder.CreateICmpNE(r, ConstantInt::get(r->getType(), 0));
+        Value *cmp = Builder.CreateAnd(lb, rb);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
+      case BinOp::Or: {
+        Value *lb = Builder.CreateICmpNE(l, ConstantInt::get(l->getType(), 0));
+        Value *rb = Builder.CreateICmpNE(r, ConstantInt::get(r->getType(), 0));
+        Value *cmp = Builder.CreateOr(lb, rb);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
+      case BinOp::Shr:
+        return Builder.CreateAShr(l, r);
     }
   }
 

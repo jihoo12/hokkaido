@@ -32,6 +32,7 @@ struct TypeAnnotation {
 enum class BinOp {
   Add, Sub, Mul, Div,
   Eq, Ne, Less, Greater, Le, Ge,
+  And, Or, Shr,
 };
 
 struct Expr {

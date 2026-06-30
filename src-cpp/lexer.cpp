@@ -67,7 +67,23 @@ Token Lexer::next_token() {
     advance();
     return {TokenType::Dot, ".", 0, l, c};
   }
-  if (ch == '&') { advance(); return {TokenType::Ampersand, "&", 0, l, c}; }
+  if (ch == '&') {
+    if (pos + 1 < input.size() && input[pos + 1] == '&') {
+      advance(); advance();
+      return {TokenType::AndAnd, "&&", 0, l, c};
+    }
+    advance();
+    return {TokenType::Ampersand, "&", 0, l, c};
+  }
+  if (ch == '|') {
+    if (pos + 1 < input.size() && input[pos + 1] == '|') {
+      advance(); advance();
+      return {TokenType::OrOr, "||", 0, l, c};
+    }
+    std::string err = "unexpected character '|' (did you mean '||'?)";
+    advance();
+    return {TokenType::Eof, err, 0, l, c};
+  }
   if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
   if (ch == '/') { advance(); return {TokenType::Slash, "/", 0, l, c}; }
   if (ch == '[') { advance(); return {TokenType::LSquare, "[", 0, l, c}; }
@@ -106,6 +122,10 @@ Token Lexer::next_token() {
     if (pos + 1 < input.size() && input[pos + 1] == '=') {
       advance(); advance();
       return {TokenType::GreaterEqual, ">=", 0, l, c};
+    }
+    if (pos + 1 < input.size() && input[pos + 1] == '>') {
+      advance(); advance();
+      return {TokenType::Shr, ">>", 0, l, c};
     }
     advance();
     return {TokenType::Greater, ">", 0, l, c};

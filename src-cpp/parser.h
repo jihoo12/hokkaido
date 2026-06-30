@@ -64,7 +64,10 @@ private:
   // Expressions
   std::unique_ptr<Expr> parse_expr();
   std::unique_ptr<Expr> parse_assignment();
+  std::unique_ptr<Expr> parse_logical_or();
+  std::unique_ptr<Expr> parse_logical_and();
   std::unique_ptr<Expr> parse_comparison();
+  std::unique_ptr<Expr> parse_shift();
   std::unique_ptr<Expr> parse_additive();
   std::unique_ptr<Expr> parse_multiplicative();
   std::unique_ptr<Expr> parse_unary();

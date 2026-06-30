@@ -12,7 +12,9 @@
 - [Assignment](#assignment)
 - [Pointers](#pointers)
 - [Comparison operators](#comparison-operators)
+- [Logical operators](#logical-operators)
 - [Arithmetic operators](#arithmetic-operators)
+- [Shift operators](#shift-operators)
 - [Function calls](#function-calls)
 - [Match](#match)
 - [Arrays](#arrays)
@@ -215,8 +217,27 @@ p = p - 1                // subtract from pointer
 >=      Greater than or equal
 ```
 
-Comparison operators have lower precedence than `+` and `-`, and produce an `int` (`1` for true,
-`0` for false) rather than a distinct boolean value.
+Comparison operators have lower precedence than `>>`, which in turn binds looser than `+` and
+`-`. They produce an `int` (`1` for true, `0` for false) rather than a distinct boolean value.
+
+## Logical operators
+
+```
+&&      Logical AND
+||      Logical OR
+```
+
+`&&` and `||` operate on the same "nonzero is true" rule as `if` conditions, and produce an `int`
+(`1` or `0`) like the comparison operators. They are **not** short-circuiting — both operands are
+always evaluated, regardless of the left-hand result:
+
+```
+let a: bool = x > 0 && y > 0
+let b: bool = is_ready() || retry()    // retry() always runs, even if is_ready() is true
+```
+
+`||` binds looser than `&&`, which in turn binds looser than the comparison operators, so
+`a == 1 && b == 2 || c == 3` parses as `(a == 1 && b == 2) || (c == 3)`.
 
 ## Arithmetic operators
 
@@ -229,6 +250,17 @@ Comparison operators have lower precedence than `+` and `-`, and produce an `int
 
 Standard precedence: `*` `/` bind tighter than `+` `-`. Unary `-` and `*` bind tighter than all
 binary operators.
+
+## Shift operators
+
+```
+>>      Arithmetic right shift
+```
+
+`a >> b` shifts `a` right by `b` bits, sign-extending (an arithmetic, not logical, shift — the
+sign bit is preserved for negative values). There is no left-shift operator. `>>` binds tighter
+than the comparison operators but looser than `+` and `-`, e.g. `a + 1 >> b - 1` parses as
+`(a + 1) >> (b - 1)`.
 
 ## Function calls
 

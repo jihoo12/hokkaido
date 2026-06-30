@@ -722,7 +722,7 @@ std::unique_ptr<Expr> Parser::parse_expr() {
 }
 
 std::unique_ptr<Expr> Parser::parse_assignment() {
-  auto left = parse_comparison();
+  auto left = parse_logical_or();
   if (!left) return nullptr;
 
   if (cur_tok.type == TokenType::Equals) {
@@ -742,8 +742,34 @@ std::unique_ptr<Expr> Parser::parse_assignment() {
   return left;
 }
 
+std::unique_ptr<Expr> Parser::parse_logical_or() {
+  auto left = parse_logical_and();
+  if (!left) return nullptr;
+
+  while (cur_tok.type == TokenType::OrOr) {
+    next_token();
+    auto right = parse_logical_and();
+    if (!right) return nullptr;
+    left = std::make_unique<BinaryExpr>(std::move(left), BinOp::Or, std::move(right));
+  }
+  return left;
+}
+
+std::unique_ptr<Expr> Parser::parse_logical_and() {
+  auto left = parse_comparison();
+  if (!left) return nullptr;
+
+  while (cur_tok.type == TokenType::AndAnd) {
+    next_token();
+    auto right = parse_comparison();
+    if (!right) return nullptr;
+    left = std::make_unique<BinaryExpr>(std::move(left), BinOp::And, std::move(right));
+  }
+  return left;
+}
+
 std::unique_ptr<Expr> Parser::parse_comparison() {
-  auto left = parse_additive();
+  auto left = parse_shift();
   if (!left) return nullptr;
 
   while (cur_tok.type == TokenType::Eq ||
@@ -763,9 +789,22 @@ std::unique_ptr<Expr> Parser::parse_comparison() {
       default: return left;
     }
     next_token();
-    auto right = parse_additive();
+    auto right = parse_shift();
     if (!right) return nullptr;
     left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
+  }
+  return left;
+}
+
+std::unique_ptr<Expr> Parser::parse_shift() {
+  auto left = parse_additive();
+  if (!left) return nullptr;
+
+  while (cur_tok.type == TokenType::Shr) {
+    next_token();
+    auto right = parse_additive();
+    if (!right) return nullptr;
+    left = std::make_unique<BinaryExpr>(std::move(left), BinOp::Shr, std::move(right));
   }
   return left;
 }
