@@ -19,6 +19,7 @@
 - [Namespaces](#namespaces)
 - [Include](#include)
 - [C FFI](#c-ffi)
+- [Freestanding mode](#freestanding-mode)
 - [Inline assembly](#inline-assembly)
 - [Cubical](#cubical)
 
@@ -344,7 +345,8 @@ variadic argument promotion rules (`float` → `double`, small integers → `int
 
 `extern fn` is currently only supported at the top level — it cannot appear inside a `namespace`
 block, since namespacing would qualify (mangle) the declared name, which would no longer match the
-real C symbol being linked against.
+real C symbol being linked against. It is also rejected entirely in `--freestanding` mode (see
+[Freestanding mode](#freestanding-mode)), since there's no libc linked for it to resolve against.
 
 `hokkaido prog.hk -o prog` only emits `prog.o` — it does not link, so any `extern fn` symbols
 (including ordinary libc ones like `puts` or `malloc`) stay unresolved until you link the object
@@ -366,6 +368,37 @@ doesn't invoke a linker at all. They're only echoed back as part of a suggested 
 prints once `prog.o` is written (using `ld.lld` directly if it can locate the CRT startup objects
 and dynamic linker, or `clang` as a simpler fallback otherwise), so you can copy that line or
 write your own.
+
+## Freestanding mode
+
+```
+hokkaido prog.hk -o prog --freestanding
+```
+
+`--freestanding` compiles without any dependency on the C runtime or libc. Two things change:
+
+- `main` is generated as the program's raw ELF entry point rather than a normal C-ABI `main` that
+  a CRT calls into. Since nothing will be there to receive its return value, falling off the end
+  (or an explicit `return`) is compiled to a direct `exit` syscall instead of a `ret` instruction.
+  `return n` in `main` still does what you'd expect — it's just implemented without libc's
+  `exit()`.
+- `extern fn` declarations are rejected at compile time, since there's no libc linked for them to
+  resolve against. Anything you need at the syscall level has to go through `asm(...)` instead.
+
+Because there's no CRT to provide `_start`, the suggested link command points the linker at
+`main` directly as the entry point and skips `-lc`/CRT objects entirely:
+
+```
+ld.lld --entry=main -o prog prog.o
+```
+
+(or, if `ld.lld` isn't on `PATH`, a `clang -nostdlib -static -Wl,--entry=main` invocation that
+asks clang to skip CRT/libc the same way.)
+
+This trades away everything libc normally provides for free — buffered I/O, `malloc`, `printf`,
+etc. — in exchange for a binary with no runtime dependency on libc being present on the system
+that runs it. It's intended for small, syscall-only programs (or as a base to build a custom
+runtime on top of), not as a drop-in replacement for normal compilation.
 
 ## Inline assembly
 

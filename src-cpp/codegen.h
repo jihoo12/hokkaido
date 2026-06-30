@@ -33,12 +33,19 @@ class CodeGen {
   std::map<std::string, std::vector<std::pair<std::string, TypeAnnotation>>> struct_fields;
 
 public:
-  CodeGen(llvm::LLVMContext &Ctx, llvm::Module &Mod, llvm::IRBuilder<> &Bld)
-      : Context(Ctx), M(Mod), Builder(Bld) {}
+  CodeGen(llvm::LLVMContext &Ctx, llvm::Module &Mod, llvm::IRBuilder<> &Bld,
+          bool Freestanding = false)
+      : Context(Ctx), M(Mod), Builder(Bld), freestanding(Freestanding) {}
 
   bool generate(const std::vector<std::unique_ptr<Decl>> &decls);
 
 private:
+  // When true, `main` is generated as a raw ELF entry point (no CRT/libc):
+  // instead of returning normally, it terminates via a direct `exit`
+  // syscall, and `extern fn` declarations are rejected at compile time
+  // since there is no libc to resolve them against.
+  bool freestanding;
+
   // Top-level codegen
   bool gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls);
 

@@ -129,6 +129,13 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
   FnDecl *user_main = nullptr;
   for (auto &decl : decls) {
     if (auto *fn = dynamic_cast<FnDecl *>(decl.get())) {
+      if (freestanding && fn->is_extern) {
+        errs() << "Error: 'extern fn " << fn->name << "' is not allowed in "
+                  "freestanding mode (no libc is linked, so there is no "
+                  "symbol for it to resolve against)\n";
+        return false;
+      }
+
       std::vector<Type *> param_types;
       for (auto &p : fn->params)
         param_types.push_back(get_llvm_type(p.type_ann));
@@ -194,12 +201,31 @@ bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
 
   // Call user main and return its value truncated to i32
   Function *user_main = M.getFunction("__user_main");
+  Value *result;
   if (user_main) {
-    Value *result = Builder.CreateCall(user_main, {});
-    result = Builder.CreateTrunc(result, Type::getInt32Ty(Context));
-    Builder.CreateRet(result);
+    result = Builder.CreateCall(user_main, {});
   } else {
-    Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+    result = ConstantInt::get(Type::getInt64Ty(Context), 0);
+  }
+
+  if (freestanding) {
+    // There is no CRT here: this `main` is itself the raw ELF entry point
+    // (the suggested link command passes `--entry=main`), and there is no
+    // libc `exit()` to fall back on either. A normal `ret` would pop
+    // whatever garbage happens to be on the stack as a return address and
+    // jump to it, so instead terminate directly via the exit(2) syscall —
+    // `rax = 60` (exit), `rdi = status` — which never returns.
+    FunctionType *AsmFT =
+        FunctionType::get(Type::getVoidTy(Context), {Type::getInt64Ty(Context)}, false);
+    InlineAsm *ExitSyscall = InlineAsm::get(
+        AsmFT, "movq $$60, %rax\n\tsyscall",
+        "{rdi},~{rax},~{rcx},~{r11},~{memory}",
+        /*hasSideEffects=*/true);
+    Builder.CreateCall(ExitSyscall, {result});
+    Builder.CreateUnreachable();
+  } else {
+    Value *truncated = Builder.CreateTrunc(result, Type::getInt32Ty(Context));
+    Builder.CreateRet(truncated);
   }
   return true;
 }

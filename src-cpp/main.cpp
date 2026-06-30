@@ -102,9 +102,15 @@ static std::string find_dynamic_linker() {
 void print_usage() {
   std::cout << "hokkaido — LLVM-based compiler with cubical compile-time evaluation\n\n";
   std::cout << "Usage:\n";
-  std::cout << "  hokkaido input.hk              Print LLVM IR to stdout\n";
-  std::cout << "  hokkaido input.hk -o output    Compile to an object file (output.o)\n";
-  std::cout << "  hokkaido input.cub              Evaluate a .cub file\n\n";
+  std::cout << "  hokkaido input.hk                  Print LLVM IR to stdout\n";
+  std::cout << "  hokkaido input.hk -o output         Compile to an object file (output.o)\n";
+  std::cout << "  hokkaido input.hk -o output --freestanding\n";
+  std::cout << "                                       Same, but with no CRT/libc dependency:\n";
+  std::cout << "                                       'main' becomes the raw ELF entry point\n";
+  std::cout << "                                       and exits via a direct syscall. Plain\n";
+  std::cout << "                                       'extern fn' declarations are rejected,\n";
+  std::cout << "                                       since there's no libc to resolve them.\n";
+  std::cout << "  hokkaido input.cub                  Evaluate a .cub file\n\n";
   std::cout << "hokkaido does not link executables itself — it only emits an object\n";
   std::cout << "file. After compiling, link it yourself with 'ld.lld', 'clang', or your\n";
   std::cout << "platform's usual linker. Run with -o to see a suggested link command for\n";
@@ -155,14 +161,18 @@ int main(int argc, char *argv[]) {
 
   IRBuilder<> Builder(Context);
 
-  // Parse optional -o flag and any extra linker flags (e.g. -lm, -lcurl,
-  // -L/path) for linking against C libraries used by `extern fn` declarations.
+  // Parse optional -o flag, --freestanding, and any extra linker flags
+  // (e.g. -lm, -lcurl, -L/path) for linking against C libraries used by
+  // `extern fn` declarations.
   std::string OutputPath;
+  bool Freestanding = false;
   std::vector<std::string> ExtraLinkArgs;
   for (int i = 2; i < argc; i++) {
     std::string Arg = argv[i];
     if (Arg == "-o" && i + 1 < argc) {
       OutputPath = argv[++i];
+    } else if (Arg == "--freestanding") {
+      Freestanding = true;
     } else {
       ExtraLinkArgs.push_back(Arg);
     }
@@ -197,7 +207,7 @@ int main(int argc, char *argv[]) {
       return 1;
     }
 
-    CodeGen cg(Context, *M, Builder);
+    CodeGen cg(Context, *M, Builder, Freestanding);
     if (!cg.generate(decls)) {
       return 1;
     }
@@ -237,13 +247,33 @@ int main(int argc, char *argv[]) {
       LPM.run(*M);
       Dest.close();
 
-      std::string CrtDir = find_crt_dir();
-      std::string DynamicLinker = find_dynamic_linker();
       bool HaveLdLld = find_ld_lld();
 
       std::cout << "Object file written to: " << ObjPath << "\n\n";
       std::cout << "hokkaido does not link executables itself. To produce '"
                 << OutputPath << "', link the object file yourself, e.g.:\n\n";
+
+      if (Freestanding) {
+        // No CRT, no libc: `main` is the raw ELF entry point, so the
+        // linker just needs to be told that directly. CRT/libc search
+        // doesn't apply here.
+        if (HaveLdLld) {
+          std::cout << "  ld.lld --entry=main -o " << OutputPath << " " << ObjPath;
+          for (auto &a : ExtraLinkArgs) std::cout << " " << a;
+          std::cout << "\n";
+        } else {
+          std::cout << "  clang -nostdlib -static -Wl,--entry=main " << ObjPath
+                     << " -o " << OutputPath;
+          for (auto &a : ExtraLinkArgs) std::cout << " " << a;
+          std::cout << "\n\n  ('ld.lld' was not found on PATH; this clang "
+                       "invocation tells it to skip CRT/libc and use 'main' "
+                       "as the raw entry point instead.)\n";
+        }
+        return 0;
+      }
+
+      std::string CrtDir = find_crt_dir();
+      std::string DynamicLinker = find_dynamic_linker();
 
       if (HaveLdLld && !CrtDir.empty() && !DynamicLinker.empty()) {
         // Equivalent to what `clang ObjPath -o OutputPath` does under the
