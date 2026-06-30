@@ -1,18 +1,4 @@
 // hokkaido — LLVM-based compiler with cubical compile-time evaluation
-//
-// Syntax:
-//   // Regular variable declaration
-//   let int x = 42
-//   let float y = 3.14
-//   let string s = "hello"
-//
-//   // Cubical variable declaration (inline cubical source)
-//   let cubical five = "data Nat = | zero : Nat | suc : Nat -> Nat
-//                       def main : Nat = suc (suc (suc (suc (suc zero))))"
-//
-//   // Cubical variable declaration (from file)
-//   let cubical result = "path/to/expression.cub"
-//
 // The cubical type triggers compile-time evaluation of the cubical
 // expression. The result is embedded as an LLVM constant.
 
@@ -47,6 +33,69 @@
 using namespace llvm;
 
 // =========================================================================
+// Minimal C runtime discovery for linking with ld.lld directly
+// =========================================================================
+//
+// ld.lld is purely a linker — unlike clang, it has no built-in knowledge of
+// where a given system keeps its C runtime startup objects (crt1.o,
+// crti.o, crtn.o), libc, or the dynamic loader path. A compiler driver
+// like clang normally works that out for you from the target triple and
+// sysroot. Here we do a small best-effort search across common distro
+// layouts instead, so the toolchain doesn't need a full clang install just
+// to perform the final link step. Anything nonstandard can be overridden
+// via HOKKAIDO_CRT_DIR / HOKKAIDO_DYNAMIC_LINKER.
+
+static std::string find_crt_dir() {
+  if (const char *env = std::getenv("HOKKAIDO_CRT_DIR")) return env;
+  static const char *candidates[] = {
+      "/usr/lib/x86_64-linux-gnu",   // Debian/Ubuntu x86_64
+      "/usr/lib/aarch64-linux-gnu",  // Debian/Ubuntu arm64
+      "/usr/lib64",                  // Fedora/RHEL/openSUSE
+      "/usr/lib",                    // Arch and others
+      "/lib64",
+      "/lib",
+  };
+  for (const char *dir : candidates) {
+    if (std::filesystem::exists(std::string(dir) + "/crt1.o")) return dir;
+  }
+  return "";
+}
+
+static bool find_ld_lld() {
+  if (const char *env = std::getenv("HOKKAIDO_LD_LLD")) {
+    return std::filesystem::exists(env);
+  }
+  if (const char *path = std::getenv("PATH")) {
+    std::string PathStr(path);
+    size_t start = 0;
+    while (start <= PathStr.size()) {
+      size_t end = PathStr.find(':', start);
+      if (end == std::string::npos) end = PathStr.size();
+      std::string dir = PathStr.substr(start, end - start);
+      if (!dir.empty() && std::filesystem::exists(dir + "/ld.lld")) {
+        return true;
+      }
+      start = end + 1;
+    }
+  }
+  return false;
+}
+
+static std::string find_dynamic_linker() {
+  if (const char *env = std::getenv("HOKKAIDO_DYNAMIC_LINKER")) return env;
+  static const char *candidates[] = {
+      "/lib64/ld-linux-x86-64.so.2",   // glibc x86_64
+      "/lib/ld-linux-aarch64.so.1",    // glibc arm64
+      "/lib/ld-linux.so.2",            // glibc i386
+      "/lib/ld-musl-x86_64.so.1",      // musl x86_64
+  };
+  for (const char *path : candidates) {
+    if (std::filesystem::exists(path)) return path;
+  }
+  return "";
+}
+
+// =========================================================================
 // Main entry point
 // =========================================================================
 
@@ -54,11 +103,12 @@ void print_usage() {
   std::cout << "hokkaido — LLVM-based compiler with cubical compile-time evaluation\n\n";
   std::cout << "Usage:\n";
   std::cout << "  hokkaido input.hk              Print LLVM IR to stdout\n";
-  std::cout << "  hokkaido input.hk -o output    Compile to executable\n";
-  std::cout << "  hokkaido input.hk -o output -lm -lcurl\n";
-  std::cout << "                                  Compile to executable, linking extra\n";
-  std::cout << "                                  C libraries for `extern fn` declarations\n";
-  std::cout << "  hokkaido input.cub              Evaluate a .cub file\n";
+  std::cout << "  hokkaido input.hk -o output    Compile to an object file (output.o)\n";
+  std::cout << "  hokkaido input.cub              Evaluate a .cub file\n\n";
+  std::cout << "hokkaido does not link executables itself — it only emits an object\n";
+  std::cout << "file. After compiling, link it yourself with 'ld.lld', 'clang', or your\n";
+  std::cout << "platform's usual linker. Run with -o to see a suggested link command for\n";
+  std::cout << "this object file once it's been emitted.\n";
 }
 
 int main(int argc, char *argv[]) {
@@ -187,13 +237,46 @@ int main(int argc, char *argv[]) {
       LPM.run(*M);
       Dest.close();
 
-      std::string LinkCmd = "clang " + ObjPath + " -o " + OutputPath;
-      for (auto &a : ExtraLinkArgs) LinkCmd += " " + a;
-      int Ret = std::system(LinkCmd.c_str());
-      std::remove(ObjPath.c_str());
-      if (Ret != 0) {
-        std::cerr << "Error: linking failed (is clang installed?)\n";
-        return 1;
+      std::string CrtDir = find_crt_dir();
+      std::string DynamicLinker = find_dynamic_linker();
+      bool HaveLdLld = find_ld_lld();
+
+      std::cout << "Object file written to: " << ObjPath << "\n\n";
+      std::cout << "hokkaido does not link executables itself. To produce '"
+                << OutputPath << "', link the object file yourself, e.g.:\n\n";
+
+      if (HaveLdLld && !CrtDir.empty() && !DynamicLinker.empty()) {
+        // Equivalent to what `clang ObjPath -o OutputPath` does under the
+        // hood, minus the parts of clang we don't need (no C compilation
+        // happens here — the .o file above was already produced by LLVM).
+        // Order matters to the linker: crt1.o, crti.o, then user objects
+        // and libraries, then crtn.o.
+        std::cout << "  ld.lld -o " << OutputPath
+                   << " -dynamic-linker " << DynamicLinker
+                   << " " << CrtDir << "/crt1.o"
+                   << " " << CrtDir << "/crti.o"
+                   << " " << ObjPath
+                   << " -L" << CrtDir << " -lc";
+        for (auto &a : ExtraLinkArgs) std::cout << " " << a;
+        std::cout << " " << CrtDir << "/crtn.o\n";
+      } else {
+        // Couldn't find everything needed for a precise ld.lld invocation;
+        // clang is a much simpler one-liner that figures all of that out
+        // itself, so suggest that instead.
+        std::cout << "  clang " << ObjPath << " -o " << OutputPath;
+        for (auto &a : ExtraLinkArgs) std::cout << " " << a;
+        std::cout << "\n";
+        if (!HaveLdLld) {
+          std::cout << "\n  ('ld.lld' was not found on PATH.)\n";
+        }
+        if (CrtDir.empty() || DynamicLinker.empty()) {
+          std::cout << "  (Could not locate C runtime startup objects or "
+                       "the dynamic linker for a direct ld.lld invocation; "
+                       "install glibc development files, e.g. 'libc6-dev' "
+                       "on Debian/Ubuntu or 'glibc-devel' on Fedora/RHEL, "
+                       "or set HOKKAIDO_CRT_DIR and "
+                       "HOKKAIDO_DYNAMIC_LINKER.)\n";
+        }
       }
     }
     return 0;

@@ -323,7 +323,7 @@ fn main() -> int {
 `extern fn name(params...) -> T` declares a foreign function — typically from a C library — to
 link against. It has no body: a `{ }` block is not written, and the declaration ends after the
 return type. Codegen emits this as a function *declaration* only; the actual definition is
-resolved by the linker against the named symbol (the C standard library is linked by default).
+resolved by whatever linker you run afterwards against the named symbol.
 
 The parameter list may end in a bare `...` to mark the function variadic (C-style varargs, as
 used by `printf`-family functions):
@@ -346,12 +346,26 @@ variadic argument promotion rules (`float` → `double`, small integers → `int
 block, since namespacing would qualify (mangle) the declared name, which would no longer match the
 real C symbol being linked against.
 
-To link against an additional C library beyond libc, pass linker flags after `-o` on the command
-line; they're forwarded straight to the underlying `clang` link step:
+`hokkaido prog.hk -o prog` only emits `prog.o` — it does not link, so any `extern fn` symbols
+(including ordinary libc ones like `puts` or `malloc`) stay unresolved until you link the object
+file yourself. The simplest way is to hand it to `clang`, which already knows how to find libc and
+the C runtime startup objects:
 
 ```
-hokkaido prog.hk -o prog -lm -lcurl -L/usr/local/lib
+clang prog.o -o prog
 ```
+
+To link against an additional C library beyond libc, add the usual linker flags:
+
+```
+clang prog.o -o prog -lm -lcurl -L/usr/local/lib
+```
+
+Any extra arguments you pass to `hokkaido` after `-o prog` aren't used for linking — `hokkaido`
+doesn't invoke a linker at all. They're only echoed back as part of a suggested link command it
+prints once `prog.o` is written (using `ld.lld` directly if it can locate the CRT startup objects
+and dynamic linker, or `clang` as a simpler fallback otherwise), so you can copy that line or
+write your own.
 
 ## Inline assembly
 
