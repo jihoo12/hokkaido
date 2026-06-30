@@ -134,10 +134,12 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
         param_types.push_back(get_llvm_type(p.type_ann));
 
       FunctionType *FT = FunctionType::get(
-          get_llvm_type(fn->return_type), param_types, false);
-      // Rename user "main" so it doesn't conflict with the auto-generated entry
+          get_llvm_type(fn->return_type), param_types, fn->is_variadic);
+      // Rename user "main" so it doesn't conflict with the auto-generated
+      // entry point. An `extern fn main(...)` is a foreign symbol, not the
+      // program's entry point, so it's left alone and not treated specially.
       std::string llvm_name = fn->name;
-      if (fn->name == "main") {
+      if (!fn->is_extern && fn->name == "main") {
         llvm_name = "__user_main";
         user_main = fn;
       }
@@ -156,8 +158,10 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
     return false;
   }
 
-  // Pass 2: generate function bodies
+  // Pass 2: generate function bodies (extern declarations have none —
+  // they're foreign symbols resolved at link time)
   for (auto *fn : fn_decls) {
+    if (fn->is_extern) continue;
     std::string llvm_name = (fn->name == "main") ? "__user_main" : fn->name;
     if (!gen_fn_body(fn, M.getFunction(llvm_name)))
       return false;
@@ -385,13 +389,34 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       errs() << "Error: undefined function '" << call->callee << "'\n";
       return nullptr;
     }
-    if (callee->arg_size() != call->args.size()) {
+    size_t fixed_params = callee->arg_size();
+    if (callee->isVarArg()) {
+      if (call->args.size() < fixed_params) {
+        errs() << "Error: too few arguments to '" << call->callee << "'\n";
+        return nullptr;
+      }
+    } else if (fixed_params != call->args.size()) {
       errs() << "Error: wrong number of arguments to '" << call->callee << "'\n";
       return nullptr;
     }
     std::vector<Value *> args;
     for (size_t i = 0; i < call->args.size(); i++) {
-      Type *param_type = callee->getArg(i)->getType();
+      Type *param_type;
+      if (i < fixed_params) {
+        param_type = callee->getArg(i)->getType();
+      } else {
+        // Extra arguments past the declared parameters only happen for a
+        // variadic (`...`) callee, which has no declared LLVM type for
+        // them — infer a reasonable type from the argument expression
+        // itself, matching common C variadic usage (e.g. printf).
+        // Note: this does not perform full C variadic promotion rules
+        // (float -> double, etc.); pass float64 explicitly if needed.
+        if (dynamic_cast<StringExpr *>(call->args[i].get())) {
+          param_type = PointerType::getUnqual(Context);
+        } else {
+          param_type = Type::getInt64Ty(Context);
+        }
+      }
       Value *arg = eval_expr(call->args[i].get(), param_type);
       if (!arg) return nullptr;
       args.push_back(arg);

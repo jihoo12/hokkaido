@@ -59,7 +59,14 @@ Token Lexer::next_token() {
     advance();
     return {TokenType::Colon, ":", 0, l, c};
   }
-  if (ch == '.') { advance(); return {TokenType::Dot, ".", 0, l, c}; }
+  if (ch == '.') {
+    if (pos + 2 < input.size() && input[pos + 1] == '.' && input[pos + 2] == '.') {
+      advance(); advance(); advance();
+      return {TokenType::Ellipsis, "...", 0, l, c};
+    }
+    advance();
+    return {TokenType::Dot, ".", 0, l, c};
+  }
   if (ch == '&') { advance(); return {TokenType::Ampersand, "&", 0, l, c}; }
   if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
   if (ch == '/') { advance(); return {TokenType::Slash, "/", 0, l, c}; }
@@ -183,6 +190,7 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "let") return {TokenType::Let, id, 0, l, c};
   if (id == "include") return {TokenType::Include, id, 0, l, c};
   if (id == "namespace") return {TokenType::Namespace, id, 0, l, c};
+  if (id == "extern") return {TokenType::Extern, id, 0, l, c};
   if (id == "fn") return {TokenType::Fn, id, 0, l, c};
   if (id == "return") return {TokenType::Return, id, 0, l, c};
   if (id == "asm") return {TokenType::Asm, id, 0, l, c};

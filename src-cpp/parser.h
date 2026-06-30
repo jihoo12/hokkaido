@@ -47,6 +47,7 @@ public:
 private:
   std::unique_ptr<LetDecl> parse_let_decl();
   std::unique_ptr<FnDecl> parse_fn_decl();
+  std::unique_ptr<FnDecl> parse_extern_fn_decl();
   std::unique_ptr<StructDecl> parse_struct_decl();
   bool parse_include_decl(std::vector<std::unique_ptr<Decl>> &decls);
   bool parse_namespace_decl(std::vector<std::unique_ptr<Decl>> &decls);

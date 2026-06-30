@@ -43,8 +43,12 @@ std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
       if (!parse_include_decl(decls)) break;
     } else if (cur_tok.type == TokenType::Namespace) {
       if (!parse_namespace_decl(decls)) break;
+    } else if (cur_tok.type == TokenType::Extern) {
+      auto decl = parse_extern_fn_decl();
+      if (decl) decls.push_back(std::move(decl));
+      else break;
     } else {
-      set_error("expected declaration (let, fn, struct, include, namespace)");
+      set_error("expected declaration (let, fn, struct, include, namespace, extern)");
       break;
     }
     skip_newlines();
@@ -450,6 +454,90 @@ std::unique_ptr<FnDecl> Parser::parse_fn_decl() {
   decl->params = std::move(params);
   decl->return_type = return_type;
   decl->body = std::move(body);
+  return decl;
+}
+
+// `extern fn name(params, ...) -> T` declares a foreign symbol (typically
+// from a C library) to link against. It has no body — codegen emits an
+// LLVM function declaration only, never a definition — and its parameter
+// list may end in a bare `...` to mark it variadic (e.g. printf).
+std::unique_ptr<FnDecl> Parser::parse_extern_fn_decl() {
+  next_token(); // consume 'extern'
+
+  if (cur_tok.type != TokenType::Fn) {
+    set_error("expected 'fn' after 'extern'");
+    return nullptr;
+  }
+  next_token(); // consume 'fn'
+
+  if (cur_tok.type != TokenType::Identifier) {
+    set_error("expected function name");
+    return nullptr;
+  }
+  std::string name = cur_tok.text;
+  next_token();
+
+  if (cur_tok.type != TokenType::LParen) {
+    set_error("expected '(' after function name");
+    return nullptr;
+  }
+  next_token();
+
+  std::vector<Param> params;
+  bool is_variadic = false;
+  while (cur_tok.type != TokenType::RParen) {
+    if (!params.empty()) {
+      if (cur_tok.type != TokenType::Comma) {
+        set_error("expected ',' or ')' in parameter list");
+        return nullptr;
+      }
+      next_token();
+    }
+    if (cur_tok.type == TokenType::Ellipsis) {
+      next_token(); // consume '...'
+      is_variadic = true;
+      break; // '...' must be the last thing in the parameter list
+    }
+    Param param;
+    if (cur_tok.type != TokenType::Identifier) {
+      set_error("expected parameter name or '...'");
+      return nullptr;
+    }
+    param.name = cur_tok.text;
+    next_token();
+
+    if (cur_tok.type != TokenType::Colon) {
+      set_error("expected ':' after parameter name");
+      return nullptr;
+    }
+    next_token();
+
+    param.type_ann = parse_type_annotation();
+    if (has_error) return nullptr;
+    params.push_back(std::move(param));
+  }
+
+  if (cur_tok.type != TokenType::RParen) {
+    set_error("expected ')' after '...'");
+    return nullptr;
+  }
+  next_token(); // consume ')'
+
+  if (cur_tok.type != TokenType::Arrow) {
+    set_error("expected '->' and return type");
+    return nullptr;
+  }
+  next_token();
+
+  TypeAnnotation return_type = parse_type_annotation();
+  if (has_error) return nullptr;
+
+  auto decl = std::make_unique<FnDecl>();
+  decl->name = name;
+  decl->params = std::move(params);
+  decl->return_type = return_type;
+  decl->is_extern = true;
+  decl->is_variadic = is_variadic;
   return decl;
 }
 

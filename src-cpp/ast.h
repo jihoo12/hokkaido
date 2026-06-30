@@ -174,4 +174,10 @@ struct FnDecl : Decl {
   std::vector<Param> params;
   TypeAnnotation return_type;
   std::vector<std::unique_ptr<Stmt>> body;
+  // `extern fn foo(...) -> T` declarations: no body, declares a foreign
+  // (typically C) symbol to link against rather than generating code for it.
+  bool is_extern = false;
+  // Whether the parameter list ends in `...` (a C-style variadic function,
+  // e.g. printf). Only meaningful when is_extern is true.
+  bool is_variadic = false;
 };

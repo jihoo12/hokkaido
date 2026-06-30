@@ -22,7 +22,9 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
@@ -53,6 +55,9 @@ void print_usage() {
   std::cout << "Usage:\n";
   std::cout << "  hokkaido input.hk              Print LLVM IR to stdout\n";
   std::cout << "  hokkaido input.hk -o output    Compile to executable\n";
+  std::cout << "  hokkaido input.hk -o output -lm -lcurl\n";
+  std::cout << "                                  Compile to executable, linking extra\n";
+  std::cout << "                                  C libraries for `extern fn` declarations\n";
   std::cout << "  hokkaido input.cub              Evaluate a .cub file\n";
 }
 
@@ -100,11 +105,16 @@ int main(int argc, char *argv[]) {
 
   IRBuilder<> Builder(Context);
 
-  // Parse optional -o flag
+  // Parse optional -o flag and any extra linker flags (e.g. -lm, -lcurl,
+  // -L/path) for linking against C libraries used by `extern fn` declarations.
   std::string OutputPath;
+  std::vector<std::string> ExtraLinkArgs;
   for (int i = 2; i < argc; i++) {
-    if (std::string(argv[i]) == "-o" && i + 1 < argc) {
+    std::string Arg = argv[i];
+    if (Arg == "-o" && i + 1 < argc) {
       OutputPath = argv[++i];
+    } else {
+      ExtraLinkArgs.push_back(Arg);
     }
   }
 
@@ -123,7 +133,13 @@ int main(int argc, char *argv[]) {
   // Handle .hk files (hokkaido language)
   if (filePath.extension() == ".hk") {
     Lexer lexer(Content);
-    Parser parser(lexer);
+    auto included_files = std::make_shared<std::set<std::string>>();
+    {
+      std::error_code ec;
+      auto canonical = std::filesystem::weakly_canonical(filePath, ec);
+      included_files->insert((ec ? filePath : canonical).string());
+    }
+    Parser parser(lexer, filePath.parent_path().string(), included_files);
     auto decls = parser.parse_program();
 
     if (!parser.ok()) {
@@ -172,6 +188,7 @@ int main(int argc, char *argv[]) {
       Dest.close();
 
       std::string LinkCmd = "clang " + ObjPath + " -o " + OutputPath;
+      for (auto &a : ExtraLinkArgs) LinkCmd += " " + a;
       int Ret = std::system(LinkCmd.c_str());
       std::remove(ObjPath.c_str());
       if (Ret != 0) {

@@ -18,6 +18,7 @@
 - [Structs](#structs)
 - [Namespaces](#namespaces)
 - [Include](#include)
+- [C FFI](#c-ffi)
 - [Inline assembly](#inline-assembly)
 - [Cubical](#cubical)
 
@@ -302,6 +303,54 @@ file's declarations are namespaced along with everything else in that block:
 namespace geo {
   include "vec2.hk"     // declarations from vec2.hk become geo::Vec2, geo::add, etc.
 }
+```
+
+## C FFI
+
+```
+extern fn puts(s: string) -> int
+extern fn printf(fmt: string, ...) -> int
+extern fn malloc(size: int) -> int8*
+extern fn free(ptr: int8*) -> void
+
+fn main() -> int {
+  puts("hello from ffi")
+  printf("x = %d, y = %d\n", 1, 2)
+  return 0
+}
+```
+
+`extern fn name(params...) -> T` declares a foreign function — typically from a C library — to
+link against. It has no body: a `{ }` block is not written, and the declaration ends after the
+return type. Codegen emits this as a function *declaration* only; the actual definition is
+resolved by the linker against the named symbol (the C standard library is linked by default).
+
+The parameter list may end in a bare `...` to mark the function variadic (C-style varargs, as
+used by `printf`-family functions):
+
+```
+extern fn printf(fmt: string, ...) -> int
+```
+
+`...` must be the last thing in the parameter list. At a call site, arguments matching declared
+parameters are coerced to those parameters' types as usual; any extra arguments past that (the
+`...` portion) have no declared type to coerce to, so a type is inferred from the argument itself
+— string literals become a pointer, anything else becomes `int64`. This does **not** replicate C's
+variadic argument promotion rules (`float` → `double`, small integers → `int`); pass `float`/
+`float64` values explicitly rather than relying on automatic promotion.
+
+`string` parameters and returns map to a raw `i8*`-equivalent pointer, matching C's `char*`/
+`const char*`, so functions like `puts(const char *s)` line up directly with `puts(s: string)`.
+
+`extern fn` is currently only supported at the top level — it cannot appear inside a `namespace`
+block, since namespacing would qualify (mangle) the declared name, which would no longer match the
+real C symbol being linked against.
+
+To link against an additional C library beyond libc, pass linker flags after `-o` on the command
+line; they're forwarded straight to the underlying `clang` link step:
+
+```
+hokkaido prog.hk -o prog -lm -lcurl -L/usr/local/lib
 ```
 
 ## Inline assembly
