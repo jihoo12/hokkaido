@@ -756,15 +756,15 @@ print x
     std::cout << "--- Demo 3: Cubical recursive computation ---\n";
     std::string src =
       "let cubical fact6 = \"data Nat = | zero : Nat | suc : Nat -> Nat\n"
-      "def plus : Nat -> Nat -> Nat = \\m n. elim (\\_. Nat) {\n"
+      "def plus : Nat -> Nat -> Nat = \\\\m n. elim (\\\\_. Nat) {\n"
       "  | zero => n\n"
       "  | suc m' => suc (plus m' n)\n"
       "} m\n"
-      "def mul : Nat -> Nat -> Nat = \\m n. elim (\\_. Nat) {\n"
+      "def mul : Nat -> Nat -> Nat = \\\\m n. elim (\\\\_. Nat) {\n"
       "  | zero => zero\n"
       "  | suc m' => plus n (mul m' n)\n"
       "} m\n"
-      "def fact : Nat -> Nat = \\n. elim (\\_. Nat) {\n"
+      "def fact : Nat -> Nat = \\\\n. elim (\\\\_. Nat) {\n"
       "  | zero => suc zero\n"
       "  | suc n' => mul (suc n') (fact n')\n"
       "} n\n"
