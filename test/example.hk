@@ -1,0 +1,4 @@
+fn main() -> int {
+    let cubical n = "../test/example.cub"
+    return n
+}

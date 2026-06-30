@@ -16,6 +16,7 @@
 // The cubical type triggers compile-time evaluation of the cubical
 // expression. The result is embedded as an LLVM constant.
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -25,8 +26,11 @@
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
@@ -47,8 +51,9 @@ using namespace llvm;
 void print_usage() {
   std::cout << "hokkaido — LLVM-based compiler with cubical compile-time evaluation\n\n";
   std::cout << "Usage:\n";
-  std::cout << "  my_compiler input.hk          Compile a .hk file\n";
-  std::cout << "  my_compiler input.cub          Evaluate a .cub file\n";
+  std::cout << "  hokkaido input.hk              Print LLVM IR to stdout\n";
+  std::cout << "  hokkaido input.hk -o output    Compile to executable\n";
+  std::cout << "  hokkaido input.cub              Evaluate a .cub file\n";
 }
 
 int main(int argc, char *argv[]) {
@@ -95,6 +100,14 @@ int main(int argc, char *argv[]) {
 
   IRBuilder<> Builder(Context);
 
+  // Parse optional -o flag
+  std::string OutputPath;
+  for (int i = 2; i < argc; i++) {
+    if (std::string(argv[i]) == "-o" && i + 1 < argc) {
+      OutputPath = argv[++i];
+    }
+  }
+
   // Handle .cub files (direct cubical evaluation)
   if (filePath.extension() == ".cub" || filePath.extension() == ".uwuc") {
     cubical_value cv(Content);
@@ -123,7 +136,49 @@ int main(int argc, char *argv[]) {
       return 1;
     }
 
-    M->print(outs(), nullptr);
+    if (OutputPath.empty()) {
+      M->print(outs(), nullptr);
+    } else {
+      std::string ObjPath = OutputPath + ".o";
+      std::error_code EC;
+      raw_fd_ostream Dest(ObjPath, EC, sys::fs::OF_None);
+      if (EC) {
+        errs() << "Error: cannot open '" << ObjPath << "': " << EC.message() << "\n";
+        return 1;
+      }
+
+      LoopAnalysisManager LAM;
+      FunctionAnalysisManager FAM;
+      CGSCCAnalysisManager CGAM;
+      ModuleAnalysisManager MAM;
+
+      PassBuilder PB(TM.get());
+      PB.registerModuleAnalyses(MAM);
+      PB.registerCGSCCAnalyses(CGAM);
+      PB.registerFunctionAnalyses(FAM);
+      PB.registerLoopAnalyses(LAM);
+      PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+      // TargetMachine::addPassesToEmitFile still requires the legacy PM
+      // for the codegen backend step. The new PM infrastructure above is
+      // ready for optimization passes as the compiler grows.
+      legacy::PassManager LPM;
+      TM->registerPassBuilderCallbacks(PB);
+      if (TM->addPassesToEmitFile(LPM, Dest, nullptr, CodeGenFileType::ObjectFile)) {
+        errs() << "Error: target does not support object emission\n";
+        return 1;
+      }
+      LPM.run(*M);
+      Dest.close();
+
+      std::string LinkCmd = "clang " + ObjPath + " -o " + OutputPath;
+      int Ret = std::system(LinkCmd.c_str());
+      std::remove(ObjPath.c_str());
+      if (Ret != 0) {
+        std::cerr << "Error: linking failed (is clang installed?)\n";
+        return 1;
+      }
+    }
     return 0;
   }
 

@@ -34,6 +34,7 @@ Type *CodeGen::get_llvm_type(TypeKind kind) {
 bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
   // Pass 1: create all function declarations so they can be referenced
   std::vector<FnDecl *> fn_decls;
+  FnDecl *user_main = nullptr;
   for (auto &decl : decls) {
     if (auto *fn = dynamic_cast<FnDecl *>(decl.get())) {
       std::vector<Type *> param_types;
@@ -42,18 +43,30 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
 
       FunctionType *FT = FunctionType::get(
           get_llvm_type(fn->return_type.kind), param_types, false);
-      Function::Create(FT, Function::ExternalLinkage, fn->name, &M);
+      // Rename user "main" so it doesn't conflict with the auto-generated entry
+      std::string llvm_name = fn->name;
+      if (fn->name == "main") {
+        llvm_name = "__user_main";
+        user_main = fn;
+      }
+      Function::Create(FT, Function::ExternalLinkage, llvm_name, &M);
       fn_decls.push_back(fn);
     }
   }
 
+  if (!user_main) {
+    errs() << "Error: no main function defined (add 'fn main() -> int { ... }')\n";
+    return false;
+  }
+
   // Pass 2: generate function bodies
   for (auto *fn : fn_decls) {
-    if (!gen_fn_body(fn, M.getFunction(fn->name)))
+    std::string llvm_name = (fn->name == "main") ? "__user_main" : fn->name;
+    if (!gen_fn_body(fn, M.getFunction(llvm_name)))
       return false;
   }
 
-  // Pass 3: main function for top-level let decls
+  // Pass 3: main entry point — wraps user main and handles top-level lets
   if (!gen_main_body(decls))
     return false;
 
@@ -78,7 +91,15 @@ bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
     }
   }
 
-  Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+  // Call user main and return its value truncated to i32
+  Function *user_main = M.getFunction("__user_main");
+  if (user_main) {
+    Value *result = Builder.CreateCall(user_main, {});
+    result = Builder.CreateTrunc(result, Type::getInt32Ty(Context));
+    Builder.CreateRet(result);
+  } else {
+    Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+  }
   return true;
 }
 
