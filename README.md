@@ -1,8 +1,17 @@
-the variable definition is 
-`let type name = variable` form
-and for cubical type
-`let cubical name = inline cubical source or cubical source file` form
-and the cubical engine exist in ./src/cubical
+hokkaido — LLVM-based compiler with cubical compile-time evaluation
+
+Usage:
+  my_compiler input.hk           Compile a .hk file
+  my_compiler input.cub          Evaluate a .cub file
+  my_compiler                    show this help
+
+Hokkaido language syntax:
+  let int x = 42                 Integer variable
+  let float y = 3.14             Float variable
+  let string s = "hello"         String variable
+  let cubical n = "..."          Cubical inline expression
+  let cubical r = "file.cub"     Cubical from file
+  print x                        Print variable in compile time for debug
 
 ## LICENSE
 [LICENSE](LICENSE)
