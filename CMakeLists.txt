@@ -33,12 +33,21 @@ add_custom_target(cubical_lib ALL
     BYPRODUCTS ${CUBICAL_LIB}
 )
 
-add_executable(my_compiler main.cpp)
+# Explicit list of source files in src-cpp/
+set(HOKKAIDO_SOURCES
+    src-cpp/main.cpp
+    src-cpp/cubical.cpp
+    src-cpp/lexer.cpp
+    src-cpp/parser.cpp
+    src-cpp/codegen.cpp
+)
+
+add_executable(hokkaido ${HOKKAIDO_SOURCES})
 
 # Add dependency on the cubical library
-add_dependencies(my_compiler cubical_lib)
+add_dependencies(hokkaido cubical_lib)
 
-target_link_libraries(my_compiler PRIVATE
+target_link_libraries(hokkaido PRIVATE
     ${llvm_libs}
     ${CUBICAL_LIB}
     pthread

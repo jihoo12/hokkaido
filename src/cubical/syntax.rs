@@ -169,6 +169,19 @@ impl Datatype {
 // Pretty-printing
 // ---------------------------------------------------------------------------
 
+/// If the term is a Nat literal in normal form (chains of `suc` ending in
+/// `zero`), return the integer value. Otherwise return None.
+fn nat_to_int(t: &Term) -> Option<i64> {
+    match t {
+        Term::TCon(d, c, args) if d == "Nat" => match (c.as_str(), args.as_slice()) {
+            ("zero", []) => Some(0),
+            ("suc", [arg]) => nat_to_int(arg).map(|n| n + 1),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub fn show_term(env: &[Name], t: &Term) -> String {
     match t {
         Term::TVar(i) => {
@@ -255,7 +268,10 @@ pub fn show_term(env: &[Name], t: &Term) -> String {
         Term::TFst(p) => format!("fst {}", show_term(env, p)),
         Term::TSnd(p) => format!("snd {}", show_term(env, p)),
         Term::TData(d) => d.clone(),
-        Term::TCon(_, c, args) => {
+        t @ Term::TCon(_, c, args) => {
+            if let Some(n) = nat_to_int(t) {
+                return format!("{}", n);
+            }
             if args.is_empty() {
                 c.clone()
             } else {

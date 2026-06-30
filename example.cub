@@ -1,18 +1,173 @@
-data Nat = | zero : Nat | suc : Nat -> Nat
+data Nat =
+  | zero : Nat
+  | suc : Nat -> Nat
 
-def plus : Nat -> Nat -> Nat = \m n. elim (\_. Nat) {
-  | zero => n
-  | suc m' => suc (plus m' n)
-} m
+def id : (A : U0) -> A -> A = \A x. x
 
-def mul : Nat -> Nat -> Nat = \m n. elim (\_. Nat) {
-  | zero => zero
-  | suc m' => plus n (mul m' n)
-} m
+def plus : Nat -> Nat -> Nat =
+  \m n. elim (\_. Nat)
+    { | zero => n
+      | suc m' => suc (plus m' n)
+    } m
 
-def fact : Nat -> Nat = \n. elim (\_. Nat) {
-  | zero => suc zero
-  | suc n' => mul (suc n') (fact n')
-} n
+def two : Nat = suc (suc zero)
+def four : Nat = plus two two
 
-def main : Nat = fact (suc (suc (suc zero)))
+def isZero : Nat -> Nat =
+  \n. match n return Nat with
+    | zero => suc zero
+    | suc m => zero
+
+data S1 =
+  | base : S1
+  | loop : S1 [ base , base ]
+
+-- A path is built with interval abstraction
+def loopPath : Path S1 base base = <i> loop @ i
+
+def flipLoop : S1 -> S1 =
+  \x. match x return S1 with
+    | base => base
+    | loop i => <i> loop @ (~ i)
+
+def swap : (A : U0) -> (B : U0) -> A * B -> B * A =
+  \A B p. (snd p , fst p)
+
+def compose : (A : U0) -> (B : U0) -> (C : U0)
+            -> (B -> C) -> (A -> B) -> A -> C =
+  \A B C g f x. g (f x)
+
+def symPath : (A : U0) -> (x y : A) -> Path A x y -> Path A y x =
+  \A x y p. <i> p @ (~ i)
+
+def both : I -> I -> I =
+  \i j. (i /\ j) \/ (~ i)
+
+def cast : (A B : U0) -> Equiv A B -> A -> B =
+  \A B e a. equivFwd e a
+
+def transportExample : (A B : U0) -> Equiv A B -> A -> B =
+  \A B e a. transport (<i> ua e @ i) a
+
+def glueExample : (A B : U0) -> (e : Equiv A B) -> (a : A) -> Glue B i1 (\_. (A, e)) =
+  \A B e a. glueElem i1 (\_. a) (equivFwd e a)
+
+-- ── Ordinary datatypes ──────────────────────────────────────
+
+data Nat =
+  | zero : Nat
+  | suc  : Nat -> Nat
+
+data Bool =
+  | true  : Bool
+  | false : Bool
+
+-- ── Basic functions ─────────────────────────────────────────
+
+def id : (A : U0) -> A -> A
+  = \A x. x
+
+def not : Bool -> Bool
+  = \b. match b return Bool with
+      | true  => false
+      | false => true
+
+def add : Nat -> Nat -> Nat
+  = \m n. match m return Nat with
+      | zero  => n
+      | suc k => suc (add k n)
+
+def mul : Nat -> Nat -> Nat
+  = \m n. match m return Nat with
+      | zero  => zero
+      | suc k => add n (mul k n)
+
+def fac : Nat -> Nat
+  = \n. match n return Nat with
+      | zero  => suc zero
+      | suc k => mul (suc k) (fac k)
+
+def fib : Nat -> Nat
+  = \n. match n return Nat with
+      | zero          => zero
+      | suc k         => match k return Nat with
+          | zero          => suc zero
+          | suc k2        => add (fib k) (fib k2)
+
+-- ── Higher-order functions ────────────────────────────────────
+
+def apply : (Nat -> Nat) -> Nat -> Nat
+  = \f x. f x
+
+def twice : (Nat -> Nat) -> Nat -> Nat
+  = \f x. f (f x)
+
+-- ── Higher inductive type: the circle S1 ────────────────────
+-- `loop` is a path constructor: it returns S1, but is decorated
+-- with [base, base], meaning it's a path from base to base.
+
+data S1 =
+  | base : S1
+  | loop : S1 [ base , base ]
+
+-- A path value built directly via path abstraction (interval lambda).
+-- `<i> base` is the constant path at `base`.
+
+def reflBase : Path S1 base base
+  = <i> base
+
+-- The loop, viewed as a path, is just the constructor `loop`
+-- applied via path application at the endpoints.
+
+def loopPath : Path S1 base base
+  = loop
+
+-- Using path application explicitly: loop @ i0 = base, loop @ i1 = base
+def loopAtStart : S1
+  = loop @ i0
+
+def loopAtEnd : S1
+  = loop @ i1
+
+-- ── Interval expressions ────────────────────────────────────
+-- meet (/\), join (\/), and negation (~) on interval variables.
+
+def intervalDemo : I -> I -> I
+  = \i j. (i /\ j) \/ (~ i)
+
+-- Using Unicode aliases (∧, ∨, ¬) is equivalent:
+def intervalDemoUnicode : I -> I -> I
+  = \i j. (i ∧ j) ∨ (¬ i)
+
+-- ── Pattern matching on a path constructor ──────────────────
+-- Path-constructor cases list ordinary binders first, then the
+-- interval variable last.
+
+def s1ToBool : S1 -> Bool
+  = \x. match x return Bool with
+      | base    => true
+      | loop i  => <i> true   -- constant on the loop, since endpoints agree
+
+-- ── Sigma (pair) types ───────────────────────────────────────
+
+def natPair : Nat * Nat
+  = (suc zero, suc (suc zero))
+
+def fstOfPair : Nat
+  = fst natPair
+
+-- A dependent Sigma: a Bool paired with a Nat that depends on it
+-- (here trivially, but showing the dependent-binder form).
+
+def depPair : (b : Bool) * Nat
+  = (true, zero)
+
+-- ── Stress test computation ──────────────────────────────────
+-- main = 2 * fac 5 + fib 7
+--      = 2 * 120 + 13
+--      = 253
+
+def main : Nat
+  = add
+      (mul (suc (suc zero)) (fac (suc (suc (suc (suc (suc zero)))))))
+      (fib (suc (suc (suc (suc (suc (suc (suc zero))))))))

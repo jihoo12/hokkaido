@@ -1,21 +1,13 @@
-//! FFI interface for calling cubical from C/C++.
-//!
-//! Exposes `extern "C"` functions that can be linked from C++ code.
-//! The main entry point is `cubical_eval` which takes a cubical source
-//! string, typechecks and evaluates it, and returns the result as a
-//! C string (caller must free with `cubical_free_string`).
-
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
 use crate::cubical::syntax::show_term;
 use crate::cubical::env::{Env, apply_globals, global_ctx};
-use crate::cubical::nbe::{nbe_eval, Value, Neutral, eval_nbe, quote};
+use crate::cubical::nbe::{Globals, Value, Neutral, nbe_eval_with_globals, eval_nbe};
 use crate::cubical::parser::ProgramParser;
 use crate::cubical::typechecker;
 use crate::cubical::syntax::Term;
 
-/// Evaluate a cubical expression string and return the result as a string.
 #[unsafe(no_mangle)]
 pub extern "C" fn cubical_eval(source: *const c_char) -> *mut c_char {
     if source.is_null() {
@@ -35,7 +27,6 @@ pub extern "C" fn cubical_eval(source: *const c_char) -> *mut c_char {
     }
 }
 
-/// Evaluate cubical source and return result as a 64-bit integer (for Nat).
 #[unsafe(no_mangle)]
 pub extern "C" fn cubical_eval_int(source: *const c_char) -> i64 {
     if source.is_null() {
@@ -64,6 +55,13 @@ fn parse_nat_str(s: &str) -> i64 {
     if t.is_empty() {
         return -1;
     }
+
+    if let Ok(n) = t.parse::<i64>() {
+        if n >= 0 {
+            return n;
+        }
+    }
+
     let inner = if t.starts_with('(') && t.ends_with(')') {
         t[1..t.len() - 1].trim()
     } else {
@@ -81,6 +79,14 @@ fn parse_nat_str(s: &str) -> i64 {
         let n = parse_nat_str(&wrapped);
         return if n >= 0 { n + 1 } else { -1 };
     }
+    if t.starts_with('(') && t.ends_with(')') {
+        let inner2 = t[1..t.len() - 1].trim();
+        if let Ok(n) = inner2.parse::<i64>() {
+            if n >= 0 {
+                return n;
+            }
+        }
+    }
     -1
 }
 
@@ -93,12 +99,30 @@ pub extern "C" fn cubical_free_string(s: *mut c_char) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal evaluation logic — fully reduces recursive definitions via NBE
-// ---------------------------------------------------------------------------
+/// Build a shared globals Vec from env.defs and evaluate all definition bodies,
+/// replacing placeholders with computed values.
+///
+/// Definitions are evaluated oldest-first so that earlier (older) definitions
+/// are available when evaluating later (newer) ones.  The shared `Globals`
+/// ensures that closures created during evaluation see updated values when
+/// recursive calls unfold.
+fn build_def_values(env: &Env) -> Globals {
+    let n = env.defs.len();
+    // Placeholder for every definition (to be replaced after evaluation).
+    let placeholder = Value::VNeutral(Neutral::NVar(0));
+    let globals: Globals = std::rc::Rc::new(std::cell::RefCell::new(vec![placeholder; n]));
+
+    // Evaluate oldest (highest index) to newest (index 0).
+    for idx in (0..n).rev() {
+        let (_, _, val) = &env.defs[idx];
+        let v = eval_nbe(&[], &globals, idx, val);
+        globals.borrow_mut()[idx] = v;
+    }
+
+    globals
+}
 
 fn eval_cubical_source(source: &str) -> Result<String, String> {
-    // Phase 1: Parse and typecheck all declarations, populate the Env
     let mut env = Env::new();
     let mut parser = ProgramParser::new(source).map_err(|e| e.to_string())?;
     let mut last_name = String::new();
@@ -114,9 +138,7 @@ fn eval_cubical_source(source: &str) -> Result<String, String> {
             }
             crate::cubical::parser::Decl::Def { name, ty, val } => {
                 let closed_ty = apply_globals(&env.defs, &ty);
-                // Register before checking body (recursion support)
                 env.define(name.clone(), closed_ty.clone(), val.clone());
-                // Check the body
                 typechecker::check_dt(
                     &env.datatypes,
                     &global_ctx(&env.defs),
@@ -130,7 +152,6 @@ fn eval_cubical_source(source: &str) -> Result<String, String> {
         }
     }
 
-    // Phase 2: Find the final term to evaluate
     let (name, val) = if let Some(entry) = env.defs.iter().find(|(n, _, _)| n == "main") {
         (entry.0.clone(), entry.2.clone())
     } else if let (Some(n), Some(v)) = (Some(last_name), last_term) {
@@ -139,14 +160,16 @@ fn eval_cubical_source(source: &str) -> Result<String, String> {
         return Err("no definition to evaluate".to_string());
     };
 
-    // Phase 3: Use apply_globals to inline all non-recursive definitions,
-    // then NBE-evaluate. apply_globals substitutes from highest index
-    // (oldest) to lowest (newest), so after substitution only TVar(0)
-    // through TVar(k) remain for recursive self-references.
-    // Then we build a minimal NBE env for those remaining references.
-    let substituted = apply_globals(&env.defs, &val);
-    let nf = nbe_eval(&substituted);
+    // Build global definition values with shared globals (Rc<RefCell<Vec<Value>>>).
+    // Closures created during evaluation share the same globals, so recursive
+    // self-references resolve correctly after placeholder replacement.
+    let globals = build_def_values(&env);
+
     let global_names: Vec<String> = env.defs.iter().map(|(n, _, _)| n.clone()).collect();
+
+    // The target term is the most recently parsed definition, so global_offset = 0
+    // (meaning TVar(0) is the most recent global = the target itself at env.defs[0]).
+    let nf = nbe_eval_with_globals(&val, &globals, 0);
     let result = show_term(&global_names, &nf);
 
     Ok(format!("{} = {}", name, result))
@@ -168,7 +191,7 @@ mod tests {
         let src = "data Nat = | zero : Nat | suc : Nat -> Nat\n\
                    def main : Nat = suc (suc zero)";
         let result = eval_cubical_source(src).unwrap();
-        assert!(result.contains("suc (suc zero)"));
+        assert!(result.contains("2") || result.contains("suc (suc zero)"));
     }
 
     #[test]

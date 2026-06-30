@@ -12,6 +12,6 @@ Hokkaido language syntax:
   let cubical n = "..."          Cubical inline expression
   let cubical r = "file.cub"     Cubical from file
   print x                        Print variable in compile time for debug
-
+  
 ## LICENSE
 [LICENSE](LICENSE)
