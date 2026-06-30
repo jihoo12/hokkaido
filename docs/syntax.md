@@ -1,20 +1,37 @@
 # Hokkaido Language Syntax
 
-## Variable declarations
+## Comments
 
 ```
-let x: int = 42                 Integer variable
-let y: float = 3.14             Float variable
-let s: string = "hello"         String variable
-let n: cubical = "..."          Cubical inline expression
-let r: cubical = "file.cub"     Cubical from file
+// Line comment (everything after // is ignored)
 ```
 
-## Function definitions
+## Types
+
+```
+int         64-bit signed integer
+float       64-bit floating point
+string      String (internal)
+void        No return value (functions only)
+```
+
+## Variables
+
+```
+let x: int = 42             Integer variable
+let y: float = 3.14         Float variable
+let s: string = "hello"     String variable
+```
+
+## Functions
 
 ```
 fn add(a: int, b: int) -> int {
   return a + b
+}
+
+fn main() -> int {
+  return add(1, 2)
 }
 
 fn log(msg: string) -> void {
@@ -22,14 +39,62 @@ fn log(msg: string) -> void {
 }
 ```
 
-## Inline assembly
+A `fn main() -> int` entry point is required.
+
+## Return
 
 ```
-asm("nop")                       Inline assembly (void expression)
+return expr         Return a value from a function
+return              Return from a void function
 ```
+
+## If / Else
+
+```
+if condition {
+  // then branch
+}
+
+if condition {
+  // then branch
+} else {
+  // else branch
+}
+```
+
+## Comparison operators
+
+```
+==      Equal
+!=      Not equal
+<       Less than
+>       Greater than
+<=      Less than or equal
+>=      Greater than or equal
+```
+
+Comparison operators have lower precedence than `+` and `-`.
+
+## Arithmetic operators
+
+```
++       Addition
+-       Subtraction
+*       Multiplication
+/       Division
+```
+
+Standard precedence: `*` `/` bind tighter than `+` `-`.
+Unary `-` and `!` bind tighter than all binary operators.
 
 ## Function calls
 
 ```
-let int z = add(1, 2)          Function call
+let z: int = add(1, 2)          Function call
+```
+
+## Inline assembly
+
+```
+asm("nop")                      Inline assembly (void expression)
 ```
