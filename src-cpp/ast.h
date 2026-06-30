@@ -9,6 +9,7 @@
 // =========================================================================
 
 enum class TypeKind {
+  Void,
   Int,
   Float,
   String,
@@ -61,6 +62,10 @@ struct BinaryExpr : Expr {
 struct CallExpr : Expr {
   std::string callee;
   std::vector<std::unique_ptr<Expr>> args;
+};
+
+struct AsmExpr : Expr {
+  std::string asm_code;
 };
 
 struct Decl {

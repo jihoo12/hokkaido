@@ -6,11 +6,7 @@ Usage:
   my_compiler                    show this help
 
 Hokkaido language syntax:
-  let int x = 42                 Integer variable
-  let float y = 3.14             Float variable
-  let string s = "hello"         String variable
-  let cubical n = "..."          Cubical inline expression
-  let cubical r = "file.cub"     Cubical from file
+docs/syntax.md
   
 ## LICENSE
 [LICENSE](LICENSE)

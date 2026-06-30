@@ -5,6 +5,7 @@
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -19,6 +20,7 @@ using namespace llvm;
 
 Type *CodeGen::get_llvm_type(TypeKind kind) {
   switch (kind) {
+    case TypeKind::Void:    return Type::getVoidTy(Context);
     case TypeKind::Int:     return Type::getInt64Ty(Context);
     case TypeKind::Float:   return Type::getDoubleTy(Context);
     case TypeKind::String:  return PointerType::getUnqual(Context);
@@ -56,6 +58,11 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
 
   if (!user_main) {
     errs() << "Error: no main function defined (add 'fn main() -> int { ... }')\n";
+    return false;
+  }
+
+  if (user_main->return_type.kind != TypeKind::Int) {
+    errs() << "Error: main function must return int\n";
     return false;
   }
 
@@ -169,6 +176,13 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     return Builder.CreateCall(callee, args);
   }
 
+  if (auto *asm_ = dynamic_cast<AsmExpr *>(expr)) {
+    FunctionType *FT = FunctionType::get(Type::getVoidTy(Context), false);
+    InlineAsm *IA = InlineAsm::get(FT, asm_->asm_code, "", true, false);
+    Builder.CreateCall(IA);
+    return ConstantInt::get(Type::getInt64Ty(Context), 0);
+  }
+
   errs() << "Error: unknown expression type\n";
   return nullptr;
 }
@@ -259,6 +273,9 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
   std::string debug;
 
   switch (decl->type_ann.kind) {
+    case TypeKind::Void:
+      errs() << "Error: variable cannot have void type\n";
+      return false;
     case TypeKind::Int:
       init = eval_int_init(decl->init_expr.get());
       break;
@@ -286,6 +303,9 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
   Value *init = nullptr;
 
   switch (stmt->type_ann.kind) {
+    case TypeKind::Void:
+      errs() << "Error: variable cannot have void type\n";
+      return false;
     case TypeKind::Int:
       init = eval_int_init(stmt->init_expr.get());
       break;
@@ -340,7 +360,9 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
   // If function doesn't return, add a default return
   Type *ret_type = fn->getReturnType();
   if (!BB->getTerminator()) {
-    if (ret_type->isIntegerTy(64))
+    if (ret_type->isVoidTy())
+      Builder.CreateRetVoid();
+    else if (ret_type->isIntegerTy(64))
       Builder.CreateRet(ConstantInt::get(ret_type, 0));
     else if (ret_type->isDoubleTy())
       Builder.CreateRet(ConstantFP::get(ret_type, 0.0));
@@ -375,6 +397,17 @@ bool CodeGen::gen_stmt(Stmt *stmt) {
 bool CodeGen::gen_return_stmt(ReturnStmt *stmt) {
   Function *fn = Builder.GetInsertBlock()->getParent();
   Type *ret_type = fn->getReturnType();
+
+  if (ret_type->isVoidTy()) {
+    Builder.CreateRetVoid();
+    return true;
+  }
+
+  if (!stmt->value) {
+    errs() << "Error: non-void function must return a value\n";
+    return false;
+  }
+
   Value *val = eval_expr(stmt->value.get(), ret_type);
   if (!val) return false;
   Builder.CreateRet(val);

@@ -42,7 +42,10 @@ std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
 
 TypeAnnotation Parser::parse_type_annotation() {
   TypeAnnotation ann;
-  if (cur_tok.type == TokenType::Int) {
+  if (cur_tok.type == TokenType::Void) {
+    ann = {TypeKind::Void};
+    next_token();
+  } else if (cur_tok.type == TokenType::Int) {
     ann = {TypeKind::Int};
     next_token();
   } else if (cur_tok.type == TokenType::Float) {
@@ -55,7 +58,7 @@ TypeAnnotation Parser::parse_type_annotation() {
     ann = {TypeKind::Cubical};
     next_token();
   } else {
-    set_error("expected type (int, float, string, cubical)");
+    set_error("expected type (void, int, float, string, cubical)");
     ann = {TypeKind::Int};
     has_error = true;
   }
@@ -70,6 +73,11 @@ bool Parser::parse_let_common(TypeAnnotation &ann, std::string &name,
                                std::unique_ptr<Expr> &init) {
   ann = parse_type_annotation();
   if (has_error) return false;
+
+  if (ann.kind == TypeKind::Void) {
+    set_error("variable cannot have void type");
+    return false;
+  }
 
   if (cur_tok.type != TokenType::Identifier) {
     set_error("expected variable name");
@@ -222,14 +230,21 @@ std::unique_ptr<LetStmt> Parser::parse_let_stmt() {
 
 std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
   next_token(); // consume 'return'
-  auto expr = parse_expr();
-  if (!expr && !has_error) {
-    set_error("expected expression after return");
-    return nullptr;
+
+  if (cur_tok.type == TokenType::Number ||
+      cur_tok.type == TokenType::StringLiteral ||
+      cur_tok.type == TokenType::Identifier ||
+      cur_tok.type == TokenType::Asm ||
+      cur_tok.type == TokenType::LParen ||
+      cur_tok.type == TokenType::Minus) {
+    auto expr = parse_expr();
+    if (!expr) return nullptr;
+    auto stmt = std::make_unique<ReturnStmt>();
+    stmt->value = std::move(expr);
+    return stmt;
   }
-  auto stmt = std::make_unique<ReturnStmt>();
-  stmt->value = std::move(expr);
-  return stmt;
+
+  return std::make_unique<ReturnStmt>(); // bare return (void)
 }
 
 // -------------------------------------------------------------------------
@@ -296,6 +311,27 @@ std::unique_ptr<Expr> Parser::parse_primary() {
       return parse_call_rest(name);
     }
     return std::make_unique<IdentExpr>(name);
+  }
+  if (cur_tok.type == TokenType::Asm) {
+    next_token(); // consume 'asm'
+    if (cur_tok.type != TokenType::LParen) {
+      set_error("expected '(' after asm");
+      return nullptr;
+    }
+    next_token(); // consume '('
+    if (cur_tok.type != TokenType::StringLiteral) {
+      set_error("expected string literal in asm");
+      return nullptr;
+    }
+    auto expr = std::make_unique<AsmExpr>();
+    expr->asm_code = cur_tok.text;
+    next_token();
+    if (cur_tok.type != TokenType::RParen) {
+      set_error("expected ')'");
+      return nullptr;
+    }
+    next_token(); // consume ')'
+    return expr;
   }
   if (cur_tok.type == TokenType::LParen) {
     next_token();

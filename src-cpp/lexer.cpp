@@ -138,10 +138,12 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "let") return {TokenType::Let, id, 0, l, c};
   if (id == "fn") return {TokenType::Fn, id, 0, l, c};
   if (id == "return") return {TokenType::Return, id, 0, l, c};
+  if (id == "asm") return {TokenType::Asm, id, 0, l, c};
   if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
   if (id == "int") return {TokenType::Int, id, 0, l, c};
   if (id == "float") return {TokenType::Float, id, 0, l, c};
   if (id == "string") return {TokenType::String, id, 0, l, c};
+  if (id == "void") return {TokenType::Void, id, 0, l, c};
 
   return {TokenType::Identifier, id, 0, l, c};
 }

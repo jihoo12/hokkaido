@@ -16,6 +16,16 @@ let cubical r = "file.cub"     Cubical from file
 fn add(int a, int b) -> int {
   return a + b
 }
+
+fn log(string msg) -> void {
+  asm("nop")
+}
+```
+
+## Inline assembly
+
+```
+asm("nop")                       Inline assembly (void expression)
 ```
 
 ## Function calls
