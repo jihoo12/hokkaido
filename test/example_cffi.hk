@@ -1,0 +1,10 @@
+extern fn puts(s: string) -> int
+extern fn printf(fmt: string, ...) -> int
+extern fn malloc(size: int) -> int8*
+extern fn free(ptr: int8*) -> void
+
+fn main() -> int {
+  puts("hello from ffi")
+  printf("x = %d, y = %d\n", 1, 2)
+  return 0
+}

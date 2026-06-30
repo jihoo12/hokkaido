@@ -150,7 +150,15 @@ int main(int argc, char *argv[]) {
 
   std::string CPU = "generic";
   TargetOptions opt;
-  auto RM = std::optional<Reloc::Model>();
+  // Default to position-independent code. Modern clang/ld.lld link PIE
+  // executables by default, which requires the object file's relocations
+  // to be PIC-safe; leaving this unset previously meant LLVM picked a
+  // static/non-PIC model, producing relocations (e.g. against .rodata
+  // string literals) that a PIE link would reject with errors like
+  // "relocation R_X86_64_32 ... can not be used when making a PIE
+  // object". Building PIC here means `clang main.o -o main` works without
+  // the caller needing to pass `-no-pie` themselves.
+  auto RM = std::optional<Reloc::Model>(Reloc::Model::PIC_);
   std::unique_ptr<TargetMachine> TM(
       TheTarget->createTargetMachine(TargetTriple, CPU, "", opt, RM));
 
