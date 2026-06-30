@@ -31,8 +31,12 @@ std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
       auto decl = parse_fn_decl();
       if (decl) decls.push_back(std::move(decl));
       else break;
+    } else if (cur_tok.type == TokenType::Struct) {
+      auto decl = parse_struct_decl();
+      if (decl) decls.push_back(std::move(decl));
+      else break;
     } else {
-      set_error("expected declaration (let, fn)");
+      set_error("expected declaration (let, fn, struct)");
       break;
     }
     skip_newlines();
@@ -61,8 +65,13 @@ TypeAnnotation Parser::parse_type_annotation() {
   } else if (cur_tok.type == TokenType::Cubical) {
     ann = {TypeKind::Cubical};
     next_token();
+  } else if (cur_tok.type == TokenType::Identifier) {
+    // Struct type: the identifier is the struct name
+    ann = {TypeKind::Struct};
+    ann.struct_name = cur_tok.text;
+    next_token();
   } else {
-    set_error("expected type (void, int, float, string, cubical)");
+    set_error("expected type (void, int, float, string, cubical, or struct name)");
     ann = {TypeKind::Int};
     has_error = true;
     return ann;
@@ -91,6 +100,63 @@ TypeAnnotation Parser::parse_type_annotation() {
   }
 
   return ann;
+}
+
+// -------------------------------------------------------------------------
+// Struct declarations
+// -------------------------------------------------------------------------
+
+std::unique_ptr<StructDecl> Parser::parse_struct_decl() {
+  next_token(); // consume 'struct'
+
+  if (cur_tok.type != TokenType::Identifier) {
+    set_error("expected struct name");
+    return nullptr;
+  }
+  std::string name = cur_tok.text;
+  next_token();
+
+  skip_newlines();
+  if (cur_tok.type != TokenType::LBrace) {
+    set_error("expected '{' after struct name");
+    return nullptr;
+  }
+  next_token(); // consume '{'
+  skip_newlines();
+
+  std::vector<StructField> fields;
+  while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
+    StructField field;
+    if (cur_tok.type != TokenType::Identifier) {
+      set_error("expected field name");
+      return nullptr;
+    }
+    field.name = cur_tok.text;
+    next_token();
+
+    if (cur_tok.type != TokenType::Colon) {
+      set_error("expected ':' after field name");
+      return nullptr;
+    }
+    next_token();
+
+    field.type_ann = parse_type_annotation();
+    if (has_error) return nullptr;
+
+    fields.push_back(std::move(field));
+    skip_newlines();
+  }
+
+  if (cur_tok.type != TokenType::RBrace) {
+    set_error("expected '}' after struct fields");
+    return nullptr;
+  }
+  next_token(); // consume '}'
+
+  auto decl = std::make_unique<StructDecl>();
+  decl->name = name;
+  decl->fields = std::move(fields);
+  return decl;
 }
 
 // -------------------------------------------------------------------------
@@ -394,8 +460,9 @@ std::unique_ptr<Expr> Parser::parse_assignment() {
     bool is_ident = dynamic_cast<IdentExpr *>(left.get()) != nullptr;
     bool is_deref = dynamic_cast<DerefExpr *>(left.get()) != nullptr;
     bool is_subscript = dynamic_cast<SubscriptExpr *>(left.get()) != nullptr;
-    if (!is_ident && !is_deref && !is_subscript) {
-      set_error("left side of assignment must be a variable, dereference, or subscript");
+    bool is_field = dynamic_cast<FieldAccessExpr *>(left.get()) != nullptr;
+    if (!is_ident && !is_deref && !is_subscript && !is_field) {
+      set_error("left side of assignment must be a variable, dereference, subscript, or field access");
       return nullptr;
     }
     next_token(); // consume '='
@@ -492,6 +559,17 @@ std::unique_ptr<Expr> Parser::parse_postfix(std::unique_ptr<Expr> left) {
     }
     next_token(); // consume ']'
     left = std::make_unique<SubscriptExpr>(std::move(left), std::move(index));
+  }
+  // Handle field access: obj.field
+  while (cur_tok.type == TokenType::Dot) {
+    next_token(); // consume '.'
+    if (cur_tok.type != TokenType::Identifier) {
+      set_error("expected field name after '.'");
+      return nullptr;
+    }
+    std::string field = cur_tok.text;
+    next_token();
+    left = std::make_unique<FieldAccessExpr>(std::move(left), field);
   }
   return left;
 }

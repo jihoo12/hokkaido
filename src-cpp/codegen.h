@@ -27,6 +27,11 @@ class CodeGen {
   std::map<std::string, llvm::AllocaInst *> named_values;
   std::map<std::string, TypeKind> named_types;
 
+  // Registered struct types (name -> LLVM struct type)
+  std::map<std::string, llvm::StructType *> struct_types;
+  // Struct field types (name -> vector of (field_name, annotation))
+  std::map<std::string, std::vector<std::pair<std::string, TypeAnnotation>>> struct_fields;
+
 public:
   CodeGen(llvm::LLVMContext &Ctx, llvm::Module &Mod, llvm::IRBuilder<> &Bld)
       : Context(Ctx), M(Mod), Builder(Bld) {}
@@ -36,6 +41,12 @@ public:
 private:
   // Top-level codegen
   bool gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls);
+
+  // Struct declarations
+  void register_struct_decl(StructDecl *decl);
+  llvm::StructType *get_struct_type(const std::string &name);
+  int get_struct_field_index(const std::string &struct_name, const std::string &field_name);
+  TypeAnnotation get_struct_field_type(const std::string &struct_name, const std::string &field_name);
 
   // Let declarations / statements
   bool gen_let_decl(LetDecl *decl);

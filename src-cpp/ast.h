@@ -14,12 +14,14 @@ enum class TypeKind {
   Float,
   String,
   Cubical,
+  Struct,
 };
 
 struct TypeAnnotation {
   TypeKind kind;
   int pointer_depth = 0;
   int array_size = 0; // 0 means not an array
+  std::string struct_name; // for Struct kind
 };
 
 enum class BinOp {
@@ -98,6 +100,13 @@ struct ArrayLitExpr : Expr {
   std::vector<std::unique_ptr<Expr>> elements;
 };
 
+struct FieldAccessExpr : Expr {
+  std::unique_ptr<Expr> object;
+  std::string field;
+  FieldAccessExpr(std::unique_ptr<Expr> o, const std::string &f)
+    : object(std::move(o)), field(f) {}
+};
+
 struct Decl {
   virtual ~Decl() = default;
 };
@@ -106,6 +115,16 @@ struct LetDecl : Decl {
   TypeAnnotation type_ann;
   std::string name;
   std::unique_ptr<Expr> init_expr;
+};
+
+struct StructField {
+  std::string name;
+  TypeAnnotation type_ann;
+};
+
+struct StructDecl : Decl {
+  std::string name;
+  std::vector<StructField> fields;
 };
 
 struct Param {

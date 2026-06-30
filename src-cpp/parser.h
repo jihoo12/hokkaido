@@ -32,6 +32,7 @@ public:
 private:
   std::unique_ptr<LetDecl> parse_let_decl();
   std::unique_ptr<FnDecl> parse_fn_decl();
+  std::unique_ptr<StructDecl> parse_struct_decl();
   TypeAnnotation parse_type_annotation();
 
   // Statements

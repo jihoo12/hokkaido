@@ -1,0 +1,11 @@
+cmake --build build 2>&1 | tail -5 && ./build/hokkaido test/test_struct.hk 2>&1
+ 1860 |   LoadInst *CreateLoad(Type *Ty, Value *Ptr, bool isVolatile,
+      |                                              ~~~~~^~~~~~~~~~
+make[2]: *** [CMakeFiles/hokkaido.dir/build.make:135: CMakeFiles/hokkaido.dir/src-cpp/codegen.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:287: CMakeFiles/hokkaido.dir/all] Error 2
+make: *** [Makefile:91: all] Error 2
+Invalid indices for GEP pointer type!
+  %x1 = getelementptr %Point, ptr %p, i64 0, i64 0
+Invalid indices for GEP pointer type!
+  %y2 = getelementptr %Point, ptr %p, i64 0, i64 1
+Error: module verification failed
