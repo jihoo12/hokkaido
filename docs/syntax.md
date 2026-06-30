@@ -184,6 +184,17 @@ null            Null pointer literal
 Pointers are typed: `int64*` is a pointer to `int64`, `float**` is a pointer to pointer to
 `float`. Pointer depth is part of the type and is checked at compile time for assignment targets.
 
+Pointer arithmetic is supported through standard `+` and `-` operators. Adding an integer to
+a pointer (or a pointer to an integer) produces a pointer offset by that many elements; the
+stride is determined by the pointee type's size:
+
+```
+let p: int* = arr
+let q: int* = p + 5      // advance 5 * sizeof(int) bytes
+let r: int* = 3 + q      // pointer + integer works both ways
+p = p - 1                // subtract from pointer
+```
+
 ## Comparison operators
 
 ```
@@ -226,8 +237,22 @@ arr[0] = 0                                  assign an element
 let first: int = arr[0]                     read an element
 ```
 
-Array elements in a literal must currently be compile-time constants (e.g. number literals); a
-non-constant element is filled with zero.
+Array literal elements can be any expression, not just compile-time constants:
+
+```
+let a: int[3] = [x, x + 1, x + 2]
+```
+
+Arrays decay to a pointer to their first element when assigned to a pointer-typed variable:
+
+```
+let ptr: int* = arr                              array-to-pointer decay
+ptr[0] = 100                                     pointer-based subscript (read/write)
+let v: int = *(ptr + 2)                          pointer arithmetic
+```
+
+Once decayed, the pointer supports subscript (`ptr[i]`) and pointer arithmetic (`ptr + n`,
+`n + ptr`, `ptr - n`) with stride based on the element size.
 
 ## Structs
 
@@ -237,16 +262,27 @@ struct Point {
   y: int
 }
 
-let p: Point = Point
+let p: Point = make_point(5)     evaluated initializer
 p.x = 10
 p.y = 20
 ```
 
 Struct fields are declared one per line (no commas, no trailing separator). A struct variable is
-currently always zero-initialized at declaration — the expression on the right of `=` is parsed
-but not evaluated, so any placeholder identifier (conventionally the struct's own name) is
-accepted there. Field access and assignment (`p.x`, `p.x = 10`) work as normal once the variable
-exists.
+initialized by evaluating the expression on the right of `=` — any expression returning the
+struct type is accepted. If the expression is a single undeclared identifier (conventionally the
+struct's own name), it is treated as a placeholder and the struct is zero-initialized.
+
+Field access works on any expression that evaluates to a struct, including chained access,
+dereference, and array subscript:
+
+```
+a.b.c                         chained field access
+(*ptr).field                  dereference then field access
+arr[i].field                  array element then field access
+```
+
+Structs are passed and returned by value (like C). Passing a struct to a function copies the
+entire struct; returning a struct returns a copy.
 
 ## Namespaces
 

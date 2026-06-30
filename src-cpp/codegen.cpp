@@ -132,9 +132,23 @@ TypeAnnotation CodeGen::resolve_expr_type(Expr *expr) {
       base.array_size = 0;
       return base;
     }
-    // Also handle pointer-to-array or similar
+    if (base.pointer_depth > 0) {
+      // Pointer subscript: int* ptr; ptr[i] → int
+      base.pointer_depth--;
+      return base;
+    }
     return {base.kind};
   }
+  if (auto *bin = dynamic_cast<BinaryExpr *>(expr)) {
+    // For pointer arithmetic, return the pointer type
+    TypeAnnotation l = resolve_expr_type(bin->left.get());
+    TypeAnnotation r = resolve_expr_type(bin->right.get());
+    if (l.pointer_depth > 0) return l;
+    if (r.pointer_depth > 0) return r;
+    return {TypeKind::Int64};
+  }
+  if (dynamic_cast<NumberExpr *>(expr))
+    return {TypeKind::Int64};
   return {TypeKind::Void};
 }
 
@@ -158,21 +172,43 @@ Value *CodeGen::get_lvalue_ptr(Expr *expr, Type **out_type) {
     return ptr;
   }
   if (auto *sub = dynamic_cast<SubscriptExpr *>(expr)) {
-    Type *arr_type = nullptr;
-    Value *arr_ptr = get_lvalue_ptr(sub->array.get(), &arr_type);
-    if (!arr_ptr) return nullptr;
+    TypeAnnotation base_ann = resolve_expr_type(sub->array.get());
     Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
     if (!index) return nullptr;
-    Value *indices[] = {
-      ConstantInt::get(Type::getInt64Ty(Context), 0),
-      index
-    };
-    Value *elem_ptr = Builder.CreateGEP(arr_type, arr_ptr, indices, "elem_ptr");
-    if (out_type) {
-      if (auto *arr = dyn_cast<ArrayType>(arr_type))
-        *out_type = arr->getElementType();
+
+    if (base_ann.array_size > 0) {
+      // Array-based subscript: get alloca via lvalue, GEP with [0, i]
+      Type *arr_llvm_type = nullptr;
+      Value *arr_ptr = get_lvalue_ptr(sub->array.get(), &arr_llvm_type);
+      if (!arr_ptr) return nullptr;
+      Value *indices[] = {
+        ConstantInt::get(Type::getInt64Ty(Context), 0),
+        index
+      };
+      Value *gep = Builder.CreateGEP(arr_llvm_type, arr_ptr, indices, "elem_ptr");
+      if (out_type) {
+        if (auto *arr = dyn_cast_or_null<ArrayType>(arr_llvm_type))
+          *out_type = arr->getElementType();
+      }
+      return gep;
     }
-    return elem_ptr;
+
+    // Pointer-based subscript: evaluate base to get pointer, single GEP
+    if (base_ann.pointer_depth > 0) {
+      Type *base_llvm = get_llvm_type(base_ann);
+      if (!base_llvm) return nullptr;
+      Value *arr_ptr = eval_expr(sub->array.get(), base_llvm);
+      if (!arr_ptr) return nullptr;
+      base_ann.pointer_depth--;
+      Type *pointee = get_llvm_type(base_ann);
+      if (!pointee) pointee = Type::getInt8Ty(Context);
+      Value *gep = Builder.CreateGEP(pointee, arr_ptr, index, "elem_ptr");
+      if (out_type) *out_type = pointee;
+      return gep;
+    }
+
+    errs() << "Error: subscript requires an array or pointer\n";
+    return nullptr;
   }
   if (auto *field = dynamic_cast<FieldAccessExpr *>(expr)) {
     Type *struct_type = nullptr;
@@ -354,7 +390,18 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       errs() << "Error: undefined variable '" << id->name << "'\n";
       return nullptr;
     }
-    // For arrays, load the whole array value
+    // Array-to-pointer decay: if expected_type is a pointer and the
+    // variable is an array, return a pointer to its first element.
+    Type *alloc_type = it->second->getAllocatedType();
+    if (auto *arr_type = dyn_cast<ArrayType>(alloc_type)) {
+      if (expected_type->isPointerTy()) {
+        Value *indices[] = {
+          ConstantInt::get(Type::getInt64Ty(Context), 0),
+          ConstantInt::get(Type::getInt64Ty(Context), 0)
+        };
+        return Builder.CreateGEP(arr_type, it->second, indices, id->name);
+      }
+    }
     return Builder.CreateLoad(expected_type, it->second, id->name);
   }
 
@@ -391,22 +438,51 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   }
 
   if (auto *sub = dynamic_cast<SubscriptExpr *>(expr)) {
-    Type *arr_type = nullptr;
-    Value *arr_ptr = get_lvalue_ptr(sub->array.get(), &arr_type);
-    if (!arr_ptr) {
-      errs() << "Error: subscript target must be an lvalue\n";
+    TypeAnnotation base_ann = resolve_expr_type(sub->array.get());
+    bool is_array_sub = base_ann.array_size > 0;
+    bool is_ptr_sub = !is_array_sub && base_ann.pointer_depth > 0;
+    Value *elem_ptr = nullptr;
+
+    if (is_array_sub) {
+      // Array-based subscript: GEP with [0, i]
+      Type *arr_llvm_type = nullptr;
+      Value *arr_ptr = get_lvalue_ptr(sub->array.get(), &arr_llvm_type);
+      if (!arr_ptr) return nullptr;
+      Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
+      if (!index) return nullptr;
+      Value *indices[] = {
+        ConstantInt::get(Type::getInt64Ty(Context), 0),
+        index
+      };
+      elem_ptr = Builder.CreateGEP(arr_llvm_type, arr_ptr, indices, "elem_ptr");
+    } else if (is_ptr_sub) {
+      // Pointer-based subscript: evaluate base to get pointer, single GEP
+      Type *base_llvm = get_llvm_type(base_ann);
+      if (!base_llvm) return nullptr;
+      Value *arr_ptr = eval_expr(sub->array.get(), base_llvm);
+      if (!arr_ptr) return nullptr;
+      Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
+      if (!index) return nullptr;
+      TypeAnnotation pointee_ann = base_ann;
+      pointee_ann.pointer_depth--;
+      Type *pointee = get_llvm_type(pointee_ann);
+      if (!pointee) pointee = Type::getInt8Ty(Context);
+      elem_ptr = Builder.CreateGEP(pointee, arr_ptr, index, "elem_ptr");
+    } else {
+      errs() << "Error: subscript requires an array or pointer\n";
       return nullptr;
     }
-
-    Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
-    if (!index) return nullptr;
-
-    Value *indices[] = {
-      ConstantInt::get(Type::getInt64Ty(Context), 0),
-      index
-    };
-    Value *elem_ptr = Builder.CreateGEP(arr_type, arr_ptr, indices, "elem_ptr");
-    return Builder.CreateLoad(expected_type, elem_ptr);
+    // Load with the actual element type
+    Type *load_type = expected_type;
+    if (is_array_sub)
+      load_type = get_llvm_type(TypeAnnotation{base_ann.kind, 0, 0, base_ann.struct_name});
+    else if (is_ptr_sub) {
+      TypeAnnotation elem_ann = base_ann;
+      elem_ann.pointer_depth--;
+      load_type = get_llvm_type(elem_ann);
+    }
+    if (!load_type) load_type = expected_type;
+    return Builder.CreateLoad(load_type, elem_ptr);
   }
 
   // Field access: obj.field
@@ -466,6 +542,37 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     if (!l || !r) return nullptr;
 
     bool is_float = expected_type->isFPOrFPVectorTy();
+
+    // Pointer arithmetic: ptr + n, ptr - n, n + ptr
+    if ((bin->op == BinOp::Add || bin->op == BinOp::Sub) &&
+        (l->getType()->isPointerTy() || r->getType()->isPointerTy())) {
+      Type *pointee = nullptr;
+      Value *ptr_val = nullptr;
+      Value *idx_val = nullptr;
+      if (l->getType()->isPointerTy() && !r->getType()->isPointerTy()) {
+        ptr_val = l; idx_val = r;
+        if (bin->op == BinOp::Sub) idx_val = Builder.CreateNeg(r);
+        // Get pointee type from left operand's annotation
+        TypeAnnotation ann = resolve_expr_type(bin->left.get());
+        if (ann.pointer_depth > 0) {
+          ann.pointer_depth--;
+          pointee = get_llvm_type(ann);
+        }
+      } else if (r->getType()->isPointerTy() && !l->getType()->isPointerTy()) {
+        ptr_val = r; idx_val = l;
+        TypeAnnotation ann = resolve_expr_type(bin->right.get());
+        if (ann.pointer_depth > 0) {
+          ann.pointer_depth--;
+          pointee = get_llvm_type(ann);
+        }
+      }
+      if (pointee && ptr_val && idx_val)
+        return Builder.CreateGEP(pointee, ptr_val, idx_val, "ptr.offset");
+      // Fallback: if we couldn't determine pointee type, use int8
+      if (!pointee && ptr_val && idx_val)
+        return Builder.CreateGEP(Type::getInt8Ty(Context), ptr_val, idx_val, "ptr.offset");
+    }
+
     switch (bin->op) {
       case BinOp::Add: return is_float ? Builder.CreateFAdd(l, r) : Builder.CreateAdd(l, r);
       case BinOp::Sub: return is_float ? Builder.CreateFSub(l, r) : Builder.CreateSub(l, r);
@@ -534,6 +641,8 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       }
       Value *arg = eval_expr(call->args[i].get(), param_type);
       if (!arg) return nullptr;
+      // Array-to-pointer decay: if the argument is an array variable and
+      // the parameter is a pointer, the eval_expr above already handles it.
       args.push_back(arg);
     }
     return Builder.CreateCall(callee, args);
@@ -642,25 +751,38 @@ Value *CodeGen::eval_array_literal(ArrayLitExpr *arr, ArrayType *array_type) {
   Type *elem_type = array_type->getElementType();
   unsigned num_elems = array_type->getNumElements();
 
-  std::vector<Constant *> init_vals;
+  // Check if all elements are compile-time constants
+  bool all_const = true;
   for (size_t i = 0; i < arr->elements.size() && i < num_elems; i++) {
-    // For constants, try to get a Constant value directly
-    if (auto *num = dynamic_cast<NumberExpr *>(arr->elements[i].get())) {
+    if (!dynamic_cast<NumberExpr *>(arr->elements[i].get())) {
+      all_const = false;
+      break;
+    }
+  }
+
+  if (all_const) {
+    // Fast path: constant array
+    std::vector<Constant *> init_vals;
+    for (size_t i = 0; i < arr->elements.size() && i < num_elems; i++) {
+      auto *num = static_cast<NumberExpr *>(arr->elements[i].get());
       if (elem_type->isFPOrFPVectorTy())
         init_vals.push_back(ConstantFP::get(elem_type, num->value));
       else
         init_vals.push_back(ConstantInt::get(elem_type, (int64_t)num->value));
-    } else {
-      // Non-constant element — we need to eval at runtime, but for now just zero
-      errs() << "Warning: non-constant array element, using zero\n";
-      init_vals.push_back(Constant::getNullValue(elem_type));
     }
+    while (init_vals.size() < num_elems)
+      init_vals.push_back(Constant::getNullValue(elem_type));
+    return ConstantArray::get(array_type, init_vals);
   }
-  // Fill remaining slots with zero
-  while (init_vals.size() < num_elems) {
-    init_vals.push_back(Constant::getNullValue(elem_type));
+
+  // Runtime path: build array element by element using InsertValue
+  Value *arr_val = ConstantAggregateZero::get(array_type);
+  for (size_t i = 0; i < arr->elements.size() && i < num_elems; i++) {
+    Value *el = eval_expr(arr->elements[i].get(), elem_type);
+    if (!el) return nullptr;
+    arr_val = Builder.CreateInsertValue(arr_val, el, {(unsigned)i}, "arr.init");
   }
-  return ConstantArray::get(array_type, init_vals);
+  return arr_val;
 }
 
 // -------------------------------------------------------------------------
@@ -674,7 +796,7 @@ bool CodeGen::alloc_and_store(const std::string &name, TypeKind kind,
   Builder.CreateStore(init, alloca);
   named_values[name] = alloca;
   named_types[name] = kind;
-  if (kind == TypeKind::Struct)
+  if (kind == TypeKind::Struct || ann.pointer_depth > 0)
     named_type_anns[name] = ann;
   return true;
 }
@@ -687,7 +809,7 @@ bool CodeGen::alloc_and_store_array(const std::string &name, TypeKind kind,
   Builder.CreateStore(init, alloca);
   named_values[name] = alloca;
   named_types[name] = kind;
-  if (kind == TypeKind::Struct)
+  if (kind == TypeKind::Struct || ann.array_size > 0)
     named_type_anns[name] = ann;
   return true;
 }
@@ -883,8 +1005,11 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
     std::string pname = std::string(arg.getName());
     named_values[pname] = alloca;
     named_types[pname] = decl->params[i].type_ann.kind;
-    if (decl->params[i].type_ann.kind == TypeKind::Struct)
-      named_type_anns[pname] = decl->params[i].type_ann;
+    {
+      auto &ta = decl->params[i].type_ann;
+      if (ta.kind == TypeKind::Struct || ta.pointer_depth > 0 || ta.array_size > 0)
+        named_type_anns[pname] = ta;
+    }
     i++;
   }
 
