@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -17,12 +18,26 @@ class Parser {
   bool has_error = false;
   std::string error_msg;
 
+  // Directory the current source file lives in; used to resolve relative
+  // `include "..."` paths.
+  std::string base_dir;
+  // Set of canonical file paths already included, shared across the whole
+  // include tree, so a file (directly or transitively) cannot include
+  // itself and get stuck in infinite recursion.
+  std::shared_ptr<std::set<std::string>> included_files;
+
   void next_token();
   void skip_newlines();
   void set_error(const std::string &msg);
 
 public:
-  Parser(Lexer &lex) : lexer(lex) { next_token(); }
+  Parser(Lexer &lex, std::string base_dir = "",
+         std::shared_ptr<std::set<std::string>> included_files = nullptr)
+      : lexer(lex), base_dir(std::move(base_dir)),
+        included_files(included_files ? std::move(included_files)
+                                       : std::make_shared<std::set<std::string>>()) {
+    next_token();
+  }
 
   bool ok() const { return !has_error; }
   const std::string &error() const { return error_msg; }
@@ -33,6 +48,8 @@ private:
   std::unique_ptr<LetDecl> parse_let_decl();
   std::unique_ptr<FnDecl> parse_fn_decl();
   std::unique_ptr<StructDecl> parse_struct_decl();
+  bool parse_include_decl(std::vector<std::unique_ptr<Decl>> &decls);
+  bool parse_namespace_decl(std::vector<std::unique_ptr<Decl>> &decls);
   TypeAnnotation parse_type_annotation();
 
   // Statements

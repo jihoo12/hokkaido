@@ -1,5 +1,9 @@
 #include "parser.h"
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+
 void Parser::next_token() {
   cur_tok = lexer.next_token();
 }
@@ -35,8 +39,12 @@ std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
       auto decl = parse_struct_decl();
       if (decl) decls.push_back(std::move(decl));
       else break;
+    } else if (cur_tok.type == TokenType::Include) {
+      if (!parse_include_decl(decls)) break;
+    } else if (cur_tok.type == TokenType::Namespace) {
+      if (!parse_namespace_decl(decls)) break;
     } else {
-      set_error("expected declaration (let, fn, struct)");
+      set_error("expected declaration (let, fn, struct, include, namespace)");
       break;
     }
     skip_newlines();
@@ -81,10 +89,20 @@ TypeAnnotation Parser::parse_type_annotation() {
     ann = {TypeKind::Cubical};
     next_token();
   } else if (cur_tok.type == TokenType::Identifier) {
-    // Struct type: the identifier is the struct name
+    // Struct type: the identifier is the struct name (possibly namespaced,
+    // e.g. foo::Point or a::b::Point).
     ann = {TypeKind::Struct};
     ann.struct_name = cur_tok.text;
     next_token();
+    while (cur_tok.type == TokenType::ColonColon) {
+      next_token(); // consume '::'
+      if (cur_tok.type != TokenType::Identifier) {
+        set_error("expected identifier after '::' in type name");
+        return ann;
+      }
+      ann.struct_name += "::" + cur_tok.text;
+      next_token();
+    }
   } else {
     set_error("expected type (void, int8, int32, int64, float, bool, string, cubical, or struct name)");
     ann = {TypeKind::Int64};
@@ -172,6 +190,141 @@ std::unique_ptr<StructDecl> Parser::parse_struct_decl() {
   decl->name = name;
   decl->fields = std::move(fields);
   return decl;
+}
+
+// -------------------------------------------------------------------------
+// Namespace declarations
+// -------------------------------------------------------------------------
+//
+// Namespaces are resolved entirely here, at parse time: every declaration
+// directly inside `namespace foo { ... }` has its name rewritten to
+// "foo::name" before being handed back to the caller. Nested namespaces
+// fall out for free, since each level only ever prefixes with its own
+// name — `namespace a { namespace b { fn f() {} } }` first becomes
+// `b::f` when the inner namespace returns, then `a::b::f` when the outer
+// one does. Because this happens before codegen ever sees the AST, no
+// codegen changes are needed: "a::b::f" is just a function name like any
+// other, and `eval_expr`/`M.getFunction`/`struct_types[...]` etc. all key
+// on plain strings already.
+
+bool Parser::parse_namespace_decl(std::vector<std::unique_ptr<Decl>> &decls) {
+  next_token(); // consume 'namespace'
+
+  if (cur_tok.type != TokenType::Identifier) {
+    set_error("expected namespace name");
+    return false;
+  }
+  std::string ns_name = cur_tok.text;
+  next_token();
+
+  skip_newlines();
+  if (cur_tok.type != TokenType::LBrace) {
+    set_error("expected '{' after namespace name");
+    return false;
+  }
+  next_token(); // consume '{'
+  skip_newlines();
+
+  std::vector<std::unique_ptr<Decl>> inner_decls;
+  while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
+    if (cur_tok.type == TokenType::Let) {
+      auto decl = parse_let_decl();
+      if (!decl) return false;
+      inner_decls.push_back(std::move(decl));
+    } else if (cur_tok.type == TokenType::Fn) {
+      auto decl = parse_fn_decl();
+      if (!decl) return false;
+      inner_decls.push_back(std::move(decl));
+    } else if (cur_tok.type == TokenType::Struct) {
+      auto decl = parse_struct_decl();
+      if (!decl) return false;
+      inner_decls.push_back(std::move(decl));
+    } else if (cur_tok.type == TokenType::Include) {
+      if (!parse_include_decl(inner_decls)) return false;
+    } else if (cur_tok.type == TokenType::Namespace) {
+      if (!parse_namespace_decl(inner_decls)) return false;
+    } else {
+      set_error("expected declaration inside namespace (let, fn, struct, include, namespace)");
+      return false;
+    }
+    skip_newlines();
+  }
+
+  if (cur_tok.type != TokenType::RBrace) {
+    set_error("expected '}' to close namespace '" + ns_name + "'");
+    return false;
+  }
+  next_token(); // consume '}'
+
+  for (auto &d : inner_decls) {
+    if (auto *fn = dynamic_cast<FnDecl *>(d.get())) {
+      fn->name = ns_name + "::" + fn->name;
+    } else if (auto *let = dynamic_cast<LetDecl *>(d.get())) {
+      let->name = ns_name + "::" + let->name;
+    } else if (auto *st = dynamic_cast<StructDecl *>(d.get())) {
+      st->name = ns_name + "::" + st->name;
+    }
+    decls.push_back(std::move(d));
+  }
+  return true;
+}
+
+// -------------------------------------------------------------------------
+// Include declarations
+// -------------------------------------------------------------------------
+
+bool Parser::parse_include_decl(std::vector<std::unique_ptr<Decl>> &decls) {
+  next_token(); // consume 'include'
+
+  if (cur_tok.type != TokenType::StringLiteral) {
+    set_error("expected string literal path after 'include'");
+    return false;
+  }
+  std::string raw_path = cur_tok.text;
+  next_token();
+
+  namespace fs = std::filesystem;
+  fs::path requested(raw_path);
+  fs::path full_path = requested.is_absolute()
+                            ? requested
+                            : fs::path(base_dir.empty() ? "." : base_dir) / requested;
+
+  std::error_code ec;
+  fs::path canonical = fs::weakly_canonical(full_path, ec);
+  if (ec) canonical = full_path;
+
+  std::ifstream ifs(full_path);
+  if (!ifs) {
+    set_error("cannot open included file '" + raw_path + "'");
+    return false;
+  }
+
+  // Skip files we've already pulled in (directly or transitively), so
+  // diamond includes don't duplicate declarations and self/mutual
+  // includes don't recurse forever.
+  std::string key = canonical.string();
+  if (included_files->count(key)) {
+    return true;
+  }
+  included_files->insert(key);
+
+  std::stringstream ss;
+  ss << ifs.rdbuf();
+  std::string content = ss.str();
+
+  Lexer sub_lexer(content);
+  Parser sub_parser(sub_lexer, full_path.parent_path().string(), included_files);
+  auto sub_decls = sub_parser.parse_program();
+
+  if (!sub_parser.ok()) {
+    set_error("in included file '" + raw_path + "': " + sub_parser.error());
+    return false;
+  }
+
+  for (auto &d : sub_decls) {
+    decls.push_back(std::move(d));
+  }
+  return true;
 }
 
 // -------------------------------------------------------------------------
@@ -628,6 +781,15 @@ std::unique_ptr<Expr> Parser::parse_primary() {
   if (cur_tok.type == TokenType::Identifier) {
     std::string name = cur_tok.text;
     next_token();
+    while (cur_tok.type == TokenType::ColonColon) {
+      next_token(); // consume '::'
+      if (cur_tok.type != TokenType::Identifier) {
+        set_error("expected identifier after '::'");
+        return nullptr;
+      }
+      name += "::" + cur_tok.text;
+      next_token();
+    }
     if (cur_tok.type == TokenType::LParen) {
       return parse_call_rest(name);
     }

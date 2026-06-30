@@ -1,10 +1,33 @@
 # Hokkaido Language Syntax
 
+## Contents
+
+- [Comments](#comments)
+- [Types](#types)
+- [Variables](#variables)
+- [Functions](#functions)
+- [Return](#return)
+- [If / Else](#if--else)
+- [For loop](#for-loop)
+- [Assignment](#assignment)
+- [Pointers](#pointers)
+- [Comparison operators](#comparison-operators)
+- [Arithmetic operators](#arithmetic-operators)
+- [Function calls](#function-calls)
+- [Arrays](#arrays)
+- [Structs](#structs)
+- [Namespaces](#namespaces)
+- [Include](#include)
+- [Inline assembly](#inline-assembly)
+- [Cubical](#cubical)
+
 ## Comments
 
 ```
 // Line comment (everything after // is ignored)
 ```
+
+There is no block comment syntax.
 
 ## Types
 
@@ -17,18 +40,27 @@ float16     16-bit floating point (half)
 float32     32-bit floating point
 float64     64-bit floating point
 float       Shorthand for float64
+bool        true or false
 string      String (internal)
 void        No return value (functions only)
-bool        true or false
+cubical     Compile-time evaluated cubical expression (see Cubical)
 ```
 
-Pointer types are written with `*`:
+A struct name is also a valid type (see [Structs](#structs)).
+
+Pointer types are written with one `*` per level of indirection:
 
 ```
 int8*       Pointer to int8
 int32*      Pointer to int32
 int64*      Pointer to int64
 int**       Pointer to pointer to int64
+```
+
+Array types are written with a fixed size in brackets:
+
+```
+int[5]      Array of 5 int64 values
 ```
 
 ## Variables
@@ -47,7 +79,10 @@ let p: int64* = &c          Pointer variable (address of c)
 let b: bool = true          true
 ```
 
-Variables are mutable; assignment uses `=`.
+Variables are mutable; assignment uses `=`. A variable cannot have type `void`.
+
+`let` can appear at the top level of a file (outside any function) or inside a function body or
+block. Top-level `let`s are initialized once, before `main` runs.
 
 ## Functions
 
@@ -65,7 +100,9 @@ fn log(msg: string) -> void {
 }
 ```
 
-A `fn main() -> int` entry point is required.
+A `fn main() -> int` entry point is required at the top level of the program (i.e. not inside a
+`namespace`). `main` must return `int`. If a function falls off the end of its body without an
+explicit `return`, it returns a zero value of its declared type.
 
 ## Return
 
@@ -88,6 +125,19 @@ if condition {
 }
 ```
 
+`condition` is any expression; nonzero is treated as true. There is no `else if` keyword — chain
+with a nested `if` inside the `else` block:
+
+```
+if a {
+  // ...
+} else {
+  if b {
+    // ...
+  }
+}
+```
+
 ## For loop
 
 ```
@@ -103,16 +153,22 @@ for ; condition; { }       // while-like
 for ;; { }                 // infinite loop
 ```
 
+The init clause can be a `let` (scoped to the loop) or any expression statement.
+
 ## Assignment
 
 ```
 x = expr        Assign to an existing variable
 ```
 
-Assignment is an expression (returns the assigned value). Write through a pointer:
+Assignment is an expression (it evaluates to the assigned value), so it can be used inline, e.g.
+as the update clause of a `for` loop. Valid assignment targets are: a plain variable, a pointer
+dereference, an array subscript, or a struct field access.
 
 ```
-*p = 42      Assign 42 through pointer p
+*p = 42          Assign 42 through pointer p
+arr[0] = 1       Assign to an array element
+point.x = 10     Assign to a struct field
 ```
 
 ## Pointers
@@ -123,8 +179,8 @@ Assignment is an expression (returns the assigned value). Write through a pointe
 null            Null pointer literal
 ```
 
-Pointers are typed: `int64*` is a pointer to `int64`, `float**` is a pointer to pointer to `float`.
-Pointer depth is part of the type and checked at compile time for assignment targets.
+Pointers are typed: `int64*` is a pointer to `int64`, `float**` is a pointer to pointer to
+`float`. Pointer depth is part of the type and is checked at compile time for assignment targets.
 
 ## Comparison operators
 
@@ -137,7 +193,8 @@ Pointer depth is part of the type and checked at compile time for assignment tar
 >=      Greater than or equal
 ```
 
-Comparison operators have lower precedence than `+` and `-`.
+Comparison operators have lower precedence than `+` and `-`, and produce an `int` (`1` for true,
+`0` for false) rather than a distinct boolean value.
 
 ## Arithmetic operators
 
@@ -148,8 +205,8 @@ Comparison operators have lower precedence than `+` and `-`.
 /       Division
 ```
 
-Standard precedence: `*` `/` bind tighter than `+` `-`.
-Unary `-`, `!`, and `*` bind tighter than all binary operators.
+Standard precedence: `*` `/` bind tighter than `+` `-`. Unary `-` and `*` bind tighter than all
+binary operators.
 
 ## Function calls
 
@@ -157,25 +214,95 @@ Unary `-`, `!`, and `*` bind tighter than all binary operators.
 let z: int = add(1, 2)          Function call
 ```
 
-## array
+Arguments are evaluated left to right and coerced to each parameter's declared type.
+
+## Arrays
 
 ```
-let arr: int[5] = [10,20,30,40,50]          list definition
-arr[0] = 0                                  use array
+let arr: int[5] = [10, 20, 30, 40, 50]      array literal
+arr[0] = 0                                  assign an element
+let first: int = arr[0]                     read an element
 ```
 
-## struct
+Array elements in a literal must currently be compile-time constants (e.g. number literals); a
+non-constant element is filled with zero.
+
+## Structs
 
 ```
-struct Point {                              struct definition
+struct Point {
   x: int
   y: int
 }
 
-let p: Point = Point                        use struct
+let p: Point = Point
 p.x = 10
 p.y = 20
-``` 
+```
+
+Struct fields are declared one per line (no commas, no trailing separator). A struct variable is
+currently always zero-initialized at declaration — the expression on the right of `=` is parsed
+but not evaluated, so any placeholder identifier (conventionally the struct's own name) is
+accepted there. Field access and assignment (`p.x`, `p.x = 10`) work as normal once the variable
+exists.
+
+## Namespaces
+
+```
+namespace math {
+  fn square(x: int) -> int {
+    return x * x
+  }
+
+  struct Point {
+    x: int
+    y: int
+  }
+
+  namespace trig {
+    fn double_it(x: int) -> int {
+      return x + x
+    }
+  }
+}
+
+let a: int = math::square(5)
+let b: int = math::trig::double_it(3)
+let p: math::Point = p
+```
+
+`namespace name { ... }` groups `let`, `fn`, `struct`, `include`, and nested `namespace`
+declarations under a qualified name. Inside, declare things exactly as you would at the top
+level; from outside, refer to them with `::`, chaining one `::segment` per level of nesting
+(`a::b::name`). There is no `using namespace` — names must always be fully qualified at the use
+site.
+
+Namespaces are resolved at compile time by qualifying each declaration's name, so a namespaced
+`fn main()` (e.g. `app::main`) is **not** picked up as the program's entry point; the entry point
+must be an unqualified top-level `main`. Top-level `let`s declared inside a namespace are parsed
+and accepted, but are not currently wired into program startup the way unqualified top-level
+`let`s are.
+
+## Include
+
+```
+include "shapes.hk"
+```
+
+`include "path"` pulls in another `.hk` file's top-level declarations (`let`, `fn`, `struct`,
+nested `include`, and `namespace`) as if they were written at the `include` site. Relative paths
+are resolved relative to the directory of the file containing the `include`. A file is only ever
+included once, even if reached by multiple paths (diamond includes) or in a cycle — repeated or
+circular `include`s are silently skipped rather than causing an error or infinite loop.
+
+`include` can appear at the top level or inside a `namespace` block, in which case the included
+file's declarations are namespaced along with everything else in that block:
+
+```
+namespace geo {
+  include "vec2.hk"     // declarations from vec2.hk become geo::Vec2, geo::add, etc.
+}
+```
 
 ## Inline assembly
 
@@ -183,12 +310,19 @@ p.y = 20
 asm("nop")                      Inline assembly (void expression)
 ```
 
-## cubical
+`asm(...)` takes a single string literal of raw assembly and emits it inline. It evaluates as an
+expression but produces no usable value.
+
+## Cubical
 
 ```
 let n: cubical = "cubicalsource.cub"
 ```
 
-typecheking and evaluation at compile time  
-see the syntax document  
-[cubical surface language](cubical_surface_language.md)
+A `cubical` variable triggers compile-time type-checking and evaluation of a cubical
+expression — either inline cubical source, or, if the string ends in `.cub`, a path to a `.cub`
+file read at compile time. If the result is a natural number it is embedded as an integer
+constant; otherwise the textual result is embedded as a string constant.
+
+See the [cubical surface language](cubical_surface_language.md) syntax document for the cubical
+language itself.

@@ -1,4 +1,17 @@
+namespace math {
+  fn square(x: int) -> int { return x * x }
+
+  namespace trig {
+    fn double_it(x: int) -> int { return x + x }
+  }
+
+  struct Point { x: int  y: int }
+}
+
 fn main() -> int {
     let n: cubical = "../test/example.cub"
-    return n
+    let a: int = math::square(5)
+    let b: int = math::trig::double_it(3)
+    let p: math::Point = p
+    return b
 }
