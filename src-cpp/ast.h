@@ -10,7 +10,9 @@
 
 enum class TypeKind {
   Void,
-  Int,
+  Int8,
+  Int32,
+  Int64,
   Float,
   Bool,
   String,

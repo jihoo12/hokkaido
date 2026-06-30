@@ -9,7 +9,10 @@
 ## Types
 
 ```
-int         64-bit signed integer
+int8        8-bit signed integer
+int32       32-bit signed integer
+int64       64-bit signed integer
+int         Shorthand for int64
 float       64-bit floating point
 string      String (internal)
 void        No return value (functions only)
@@ -19,17 +22,22 @@ bool        true or false
 Pointer types are written with `*`:
 
 ```
-int*        Pointer to int
-int**       Pointer to pointer to int
+int8*       Pointer to int8
+int32*      Pointer to int32
+int64*      Pointer to int64
+int**       Pointer to pointer to int64
 ```
 
 ## Variables
 
 ```
-let x: int = 42             Integer variable
+let a: int8 = 1             8-bit integer variable
+let b: int32 = 2            32-bit integer variable
+let c: int64 = 42           64-bit integer variable
+let d: int = 42             Shorthand for int64
 let y: float = 3.14         Float variable
 let s: string = "hello"     String variable
-let p: int* = &x            Pointer variable (address of x)
+let p: int64* = &c          Pointer variable (address of c)
 let b: bool = true          true
 ```
 
@@ -109,7 +117,7 @@ Assignment is an expression (returns the assigned value). Write through a pointe
 null            Null pointer literal
 ```
 
-Pointers are typed: `int*` is a pointer to `int`, `float**` is a pointer to pointer to `float`.
+Pointers are typed: `int64*` is a pointer to `int64`, `float**` is a pointer to pointer to `float`.
 Pointer depth is part of the type and checked at compile time for assignment targets.
 
 ## Comparison operators

@@ -21,7 +21,9 @@ using namespace llvm;
 Type *CodeGen::get_llvm_type(TypeKind kind) {
   switch (kind) {
     case TypeKind::Void:    return Type::getVoidTy(Context);
-    case TypeKind::Int:     return Type::getInt64Ty(Context);
+    case TypeKind::Int8:    return Type::getInt8Ty(Context);
+    case TypeKind::Int32:   return Type::getInt32Ty(Context);
+    case TypeKind::Int64:   return Type::getInt64Ty(Context);
     case TypeKind::Float:   return Type::getDoubleTy(Context);
     case TypeKind::Bool:    return Type::getInt1Ty(Context);
     case TypeKind::String:  return PointerType::getUnqual(Context);
@@ -147,8 +149,8 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
     return false;
   }
 
-  if (user_main->return_type.kind != TypeKind::Int) {
-    errs() << "Error: main function must return int\n";
+  if (user_main->return_type.kind != TypeKind::Int64) {
+    errs() << "Error: main function must return int64\n";
     return false;
   }
 
@@ -669,7 +671,13 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
     case TypeKind::Void:
       errs() << "Error: variable cannot have void type\n";
       return false;
-    case TypeKind::Int:
+    case TypeKind::Int8:
+      init = eval_expr(decl->init_expr.get(), Type::getInt8Ty(Context));
+      break;
+    case TypeKind::Int32:
+      init = eval_expr(decl->init_expr.get(), Type::getInt32Ty(Context));
+      break;
+    case TypeKind::Int64:
       init = eval_int_init(decl->init_expr.get());
       break;
     case TypeKind::Float:
@@ -723,7 +731,13 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
     case TypeKind::Void:
       errs() << "Error: variable cannot have void type\n";
       return false;
-    case TypeKind::Int:
+    case TypeKind::Int8:
+      init = eval_expr(stmt->init_expr.get(), Type::getInt8Ty(Context));
+      break;
+    case TypeKind::Int32:
+      init = eval_expr(stmt->init_expr.get(), Type::getInt32Ty(Context));
+      break;
+    case TypeKind::Int64:
       init = eval_int_init(stmt->init_expr.get());
       break;
     case TypeKind::Float:

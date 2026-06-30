@@ -53,8 +53,14 @@ TypeAnnotation Parser::parse_type_annotation() {
   if (cur_tok.type == TokenType::Void) {
     ann = {TypeKind::Void};
     next_token();
-  } else if (cur_tok.type == TokenType::Int) {
-    ann = {TypeKind::Int};
+  } else if (cur_tok.type == TokenType::Int8) {
+    ann = {TypeKind::Int8};
+    next_token();
+  } else if (cur_tok.type == TokenType::Int32) {
+    ann = {TypeKind::Int32};
+    next_token();
+  } else if (cur_tok.type == TokenType::Int64) {
+    ann = {TypeKind::Int64};
     next_token();
   } else if (cur_tok.type == TokenType::Float) {
     ann = {TypeKind::Float};
@@ -74,8 +80,8 @@ TypeAnnotation Parser::parse_type_annotation() {
     ann.struct_name = cur_tok.text;
     next_token();
   } else {
-    set_error("expected type (void, int, float, string, cubical, or struct name)");
-    ann = {TypeKind::Int};
+    set_error("expected type (void, int8, int32, int64, float, bool, string, cubical, or struct name)");
+    ann = {TypeKind::Int64};
     has_error = true;
     return ann;
   }
