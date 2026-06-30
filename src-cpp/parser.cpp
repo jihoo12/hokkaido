@@ -71,6 +71,19 @@ TypeAnnotation Parser::parse_type_annotation() {
 
 bool Parser::parse_let_common(TypeAnnotation &ann, std::string &name,
                                std::unique_ptr<Expr> &init) {
+  if (cur_tok.type != TokenType::Identifier) {
+    set_error("expected variable name");
+    return false;
+  }
+  name = cur_tok.text;
+  next_token();
+
+  if (cur_tok.type != TokenType::Colon) {
+    set_error("expected ':' after variable name");
+    return false;
+  }
+  next_token();
+
   ann = parse_type_annotation();
   if (has_error) return false;
 
@@ -79,15 +92,8 @@ bool Parser::parse_let_common(TypeAnnotation &ann, std::string &name,
     return false;
   }
 
-  if (cur_tok.type != TokenType::Identifier) {
-    set_error("expected variable name");
-    return false;
-  }
-  name = cur_tok.text;
-  next_token();
-
   if (cur_tok.type != TokenType::Equals) {
-    set_error("expected '='");
+    set_error("expected '=' after type");
     return false;
   }
   next_token();
@@ -145,15 +151,21 @@ std::unique_ptr<FnDecl> Parser::parse_fn_decl() {
       next_token();
     }
     Param param;
-    param.type_ann = parse_type_annotation();
-    if (has_error) return nullptr;
-
     if (cur_tok.type != TokenType::Identifier) {
       set_error("expected parameter name");
       return nullptr;
     }
     param.name = cur_tok.text;
     next_token();
+
+    if (cur_tok.type != TokenType::Colon) {
+      set_error("expected ':' after parameter name");
+      return nullptr;
+    }
+    next_token();
+
+    param.type_ann = parse_type_annotation();
+    if (has_error) return nullptr;
     params.push_back(std::move(param));
   }
   next_token(); // consume ')'
@@ -208,6 +220,9 @@ std::unique_ptr<Stmt> Parser::parse_stmt() {
   if (cur_tok.type == TokenType::Return) {
     return parse_return_stmt();
   }
+  if (cur_tok.type == TokenType::If) {
+    return parse_if_stmt();
+  }
   auto expr = parse_expr();
   if (!expr) return nullptr;
   return std::make_unique<ExprStmt>(std::move(expr));
@@ -247,12 +262,63 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
   return std::make_unique<ReturnStmt>(); // bare return (void)
 }
 
+std::unique_ptr<IfStmt> Parser::parse_if_stmt() {
+  next_token(); // consume 'if'
+
+  auto cond = parse_expr();
+  if (!cond) return nullptr;
+
+  auto then_branch = parse_block();
+  if (has_error) return nullptr;
+
+  std::vector<std::unique_ptr<Stmt>> else_branch;
+  if (cur_tok.type == TokenType::Else) {
+    next_token(); // consume 'else'
+    else_branch = parse_block();
+    if (has_error) return nullptr;
+  }
+
+  auto stmt = std::make_unique<IfStmt>();
+  stmt->condition = std::move(cond);
+  stmt->then_branch = std::move(then_branch);
+  stmt->else_branch = std::move(else_branch);
+  return stmt;
+}
+
 // -------------------------------------------------------------------------
 // Expressions (recursive descent, operator precedence)
 // -------------------------------------------------------------------------
 
 std::unique_ptr<Expr> Parser::parse_expr() {
-  return parse_additive();
+  return parse_comparison();
+}
+
+std::unique_ptr<Expr> Parser::parse_comparison() {
+  auto left = parse_additive();
+  if (!left) return nullptr;
+
+  while (cur_tok.type == TokenType::Eq ||
+         cur_tok.type == TokenType::Ne ||
+         cur_tok.type == TokenType::Less ||
+         cur_tok.type == TokenType::Greater ||
+         cur_tok.type == TokenType::LessEqual ||
+         cur_tok.type == TokenType::GreaterEqual) {
+    BinOp op;
+    switch (cur_tok.type) {
+      case TokenType::Eq:          op = BinOp::Eq; break;
+      case TokenType::Ne:          op = BinOp::Ne; break;
+      case TokenType::Less:        op = BinOp::Less; break;
+      case TokenType::Greater:     op = BinOp::Greater; break;
+      case TokenType::LessEqual:   op = BinOp::Le; break;
+      case TokenType::GreaterEqual: op = BinOp::Ge; break;
+      default: return left;
+    }
+    next_token();
+    auto right = parse_additive();
+    if (!right) return nullptr;
+    left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
+  }
+  return left;
 }
 
 std::unique_ptr<Expr> Parser::parse_additive() {

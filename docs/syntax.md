@@ -3,21 +3,21 @@
 ## Variable declarations
 
 ```
-let int x = 42                 Integer variable
-let float y = 3.14             Float variable
-let string s = "hello"         String variable
-let cubical n = "..."          Cubical inline expression
-let cubical r = "file.cub"     Cubical from file
+let x: int = 42                 Integer variable
+let y: float = 3.14             Float variable
+let s: string = "hello"         String variable
+let n: cubical = "..."          Cubical inline expression
+let r: cubical = "file.cub"     Cubical from file
 ```
 
 ## Function definitions
 
 ```
-fn add(int a, int b) -> int {
+fn add(a: int, b: int) -> int {
   return a + b
 }
 
-fn log(string msg) -> void {
+fn log(msg: string) -> void {
   asm("nop")
 }
 ```

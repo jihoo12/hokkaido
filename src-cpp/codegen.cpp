@@ -153,6 +153,30 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       case BinOp::Sub: return is_float ? Builder.CreateFSub(l, r) : Builder.CreateSub(l, r);
       case BinOp::Mul: return is_float ? Builder.CreateFMul(l, r) : Builder.CreateMul(l, r);
       case BinOp::Div: return is_float ? Builder.CreateFDiv(l, r) : Builder.CreateSDiv(l, r);
+      case BinOp::Eq: {
+        Value *cmp = Builder.CreateICmpEQ(l, r);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
+      case BinOp::Ne: {
+        Value *cmp = Builder.CreateICmpNE(l, r);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
+      case BinOp::Less: {
+        Value *cmp = Builder.CreateICmpSLT(l, r);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
+      case BinOp::Greater: {
+        Value *cmp = Builder.CreateICmpSGT(l, r);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
+      case BinOp::Le: {
+        Value *cmp = Builder.CreateICmpSLE(l, r);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
+      case BinOp::Ge: {
+        Value *cmp = Builder.CreateICmpSGE(l, r);
+        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+      }
     }
   }
 
@@ -359,7 +383,7 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
 
   // If function doesn't return, add a default return
   Type *ret_type = fn->getReturnType();
-  if (!BB->getTerminator()) {
+  if (!Builder.GetInsertBlock()->getTerminator()) {
     if (ret_type->isVoidTy())
       Builder.CreateRetVoid();
     else if (ret_type->isIntegerTy(64))
@@ -385,8 +409,9 @@ bool CodeGen::gen_stmt(Stmt *stmt) {
     return gen_let_stmt(let);
   if (auto *ret = dynamic_cast<ReturnStmt *>(stmt))
     return gen_return_stmt(ret);
+  if (auto *if_ = dynamic_cast<IfStmt *>(stmt))
+    return gen_if_stmt(if_);
   if (auto *expr = dynamic_cast<ExprStmt *>(stmt)) {
-    // Evaluate for side effects (e.g. function calls)
     Value *v = eval_expr(expr->expr.get(), Type::getInt64Ty(Context));
     return v != nullptr;
   }
@@ -411,5 +436,36 @@ bool CodeGen::gen_return_stmt(ReturnStmt *stmt) {
   Value *val = eval_expr(stmt->value.get(), ret_type);
   if (!val) return false;
   Builder.CreateRet(val);
+  return true;
+}
+
+bool CodeGen::gen_if_stmt(IfStmt *stmt) {
+  Function *fn = Builder.GetInsertBlock()->getParent();
+
+  Value *cond = eval_expr(stmt->condition.get(), Type::getInt64Ty(Context));
+  if (!cond) return false;
+  cond = Builder.CreateICmpNE(cond, ConstantInt::get(Type::getInt64Ty(Context), 0));
+
+  BasicBlock *then_bb = BasicBlock::Create(Context, "if.then", fn);
+  BasicBlock *else_bb = BasicBlock::Create(Context, "if.else", fn);
+  BasicBlock *merge_bb = BasicBlock::Create(Context, "if.end", fn);
+
+  Builder.CreateCondBr(cond, then_bb, else_bb);
+
+  Builder.SetInsertPoint(then_bb);
+  for (auto &s : stmt->then_branch) {
+    if (!gen_stmt(s.get())) return false;
+  }
+  if (!Builder.GetInsertBlock()->getTerminator())
+    Builder.CreateBr(merge_bb);
+
+  Builder.SetInsertPoint(else_bb);
+  for (auto &s : stmt->else_branch) {
+    if (!gen_stmt(s.get())) return false;
+  }
+  if (!Builder.GetInsertBlock()->getTerminator())
+    Builder.CreateBr(merge_bb);
+
+  Builder.SetInsertPoint(merge_bb);
   return true;
 }

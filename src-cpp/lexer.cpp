@@ -45,15 +45,49 @@ Token Lexer::next_token() {
 
   // Single-character tokens
   if (ch == ';') { advance(); return {TokenType::Semicolon, ";", 0, l, c}; }
-  if (ch == '=') { advance(); return {TokenType::Equals, "=", 0, l, c}; }
   if (ch == '(') { advance(); return {TokenType::LParen, "(", 0, l, c}; }
   if (ch == ')') { advance(); return {TokenType::RParen, ")", 0, l, c}; }
   if (ch == '{') { advance(); return {TokenType::LBrace, "{", 0, l, c}; }
   if (ch == '}') { advance(); return {TokenType::RBrace, "}", 0, l, c}; }
   if (ch == ',') { advance(); return {TokenType::Comma, ",", 0, l, c}; }
   if (ch == '+') { advance(); return {TokenType::Plus, "+", 0, l, c}; }
+  if (ch == ':') { advance(); return {TokenType::Colon, ":", 0, l, c}; }
   if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
   if (ch == '/') { advance(); return {TokenType::Slash, "/", 0, l, c}; }
+
+  // Multi-character tokens
+  if (ch == '=') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::Eq, "==", 0, l, c};
+    }
+    advance();
+    return {TokenType::Equals, "=", 0, l, c};
+  }
+  if (ch == '!') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::Ne, "!=", 0, l, c};
+    }
+    advance();
+    return {TokenType::Eof, "unexpected '!'", 0, l, c};
+  }
+  if (ch == '<') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::LessEqual, "<=", 0, l, c};
+    }
+    advance();
+    return {TokenType::Less, "<", 0, l, c};
+  }
+  if (ch == '>') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::GreaterEqual, ">=", 0, l, c};
+    }
+    advance();
+    return {TokenType::Greater, ">", 0, l, c};
+  }
 
   // Arrow and minus
   if (ch == '-') {
@@ -139,6 +173,8 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "fn") return {TokenType::Fn, id, 0, l, c};
   if (id == "return") return {TokenType::Return, id, 0, l, c};
   if (id == "asm") return {TokenType::Asm, id, 0, l, c};
+  if (id == "if") return {TokenType::If, id, 0, l, c};
+  if (id == "else") return {TokenType::Else, id, 0, l, c};
   if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
   if (id == "int") return {TokenType::Int, id, 0, l, c};
   if (id == "float") return {TokenType::Float, id, 0, l, c};

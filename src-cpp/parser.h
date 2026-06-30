@@ -38,9 +38,11 @@ private:
   std::unique_ptr<Stmt> parse_stmt();
   std::unique_ptr<LetStmt> parse_let_stmt();
   std::unique_ptr<ReturnStmt> parse_return_stmt();
+  std::unique_ptr<IfStmt> parse_if_stmt();
 
   // Expressions
   std::unique_ptr<Expr> parse_expr();
+  std::unique_ptr<Expr> parse_comparison();
   std::unique_ptr<Expr> parse_additive();
   std::unique_ptr<Expr> parse_multiplicative();
   std::unique_ptr<Expr> parse_unary();

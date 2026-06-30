@@ -8,14 +8,15 @@
 
 enum class TokenType {
   Eof,
-  Let, Fn, Return, Asm,
+  Let, Fn, Return, Asm, If, Else,
   Cubical,
   Int, Float, String, Void,
   Identifier,
   Number,
   StringLiteral,
   Equals, Arrow,
-  Semicolon, Comma,
+  Eq, Ne, Less, Greater, LessEqual, GreaterEqual,
+  Semicolon, Comma, Colon,
   Newline,
   LParen, RParen, LBrace, RBrace,
   Plus, Minus, Star, Slash,

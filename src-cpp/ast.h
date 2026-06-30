@@ -21,10 +21,8 @@ struct TypeAnnotation {
 };
 
 enum class BinOp {
-  Add,
-  Sub,
-  Mul,
-  Div,
+  Add, Sub, Mul, Div,
+  Eq, Ne, Less, Greater, Le, Ge,
 };
 
 struct Expr {
@@ -100,6 +98,12 @@ struct LetStmt : Stmt {
 
 struct ReturnStmt : Stmt {
   std::unique_ptr<Expr> value;
+};
+
+struct IfStmt : Stmt {
+  std::unique_ptr<Expr> condition;
+  std::vector<std::unique_ptr<Stmt>> then_branch;
+  std::vector<std::unique_ptr<Stmt>> else_branch;
 };
 
 struct FnDecl : Decl {

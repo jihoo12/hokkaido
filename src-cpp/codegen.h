@@ -50,6 +50,7 @@ private:
   // Statements
   bool gen_stmt(Stmt *stmt);
   bool gen_return_stmt(ReturnStmt *stmt);
+  bool gen_if_stmt(IfStmt *stmt);
 
   // Expression evaluation
   llvm::Value *eval_expr(Expr *expr, llvm::Type *expected_type);
