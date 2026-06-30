@@ -148,6 +148,19 @@ let arr: int[5] = [10,20,30,40,50]          list definition
 arr[0] = 0                                  use array
 ```
 
+## struct
+
+```
+struct Point {                              struct definition
+  x: int
+  y: int
+}
+
+let p: Point = Point                        use struct
+p.x = 10
+p.y = 20
+``` 
+
 ## Inline assembly
 
 ```
