@@ -141,6 +141,13 @@ Unary `-`, `!`, and `*` bind tighter than all binary operators.
 let z: int = add(1, 2)          Function call
 ```
 
+## array
+
+```
+let arr: int[5] = [10,20,30,40,50]          list definition
+arr[0] = 0                                  use array
+```
+
 ## Inline assembly
 
 ```
