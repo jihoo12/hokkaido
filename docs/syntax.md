@@ -160,4 +160,6 @@ asm("nop")                      Inline assembly (void expression)
 let n: cubical = "cubicalsource.cub"
 ```
 
-typecheking and evaluation at compile time
+typecheking and evaluation at compile time  
+see the syntax document  
+[cubical surface language](cubical_surface_language.md)
