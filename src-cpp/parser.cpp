@@ -59,6 +59,9 @@ TypeAnnotation Parser::parse_type_annotation() {
   } else if (cur_tok.type == TokenType::Float) {
     ann = {TypeKind::Float};
     next_token();
+  } else if (cur_tok.type == TokenType::Bool) {
+    ann = {TypeKind::Bool};
+    next_token();
   } else if (cur_tok.type == TokenType::String) {
     ann = {TypeKind::String};
     next_token();
@@ -347,6 +350,8 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
   next_token(); // consume 'return'
 
   if (cur_tok.type == TokenType::Number ||
+      cur_tok.type == TokenType::True ||
+      cur_tok.type == TokenType::False ||
       cur_tok.type == TokenType::StringLiteral ||
       cur_tok.type == TokenType::Identifier ||
       cur_tok.type == TokenType::Asm ||
@@ -575,6 +580,16 @@ std::unique_ptr<Expr> Parser::parse_postfix(std::unique_ptr<Expr> left) {
 }
 
 std::unique_ptr<Expr> Parser::parse_primary() {
+  if (cur_tok.type == TokenType::True) {
+    auto expr = std::make_unique<NumberExpr>(cur_tok.num_val);
+    next_token();
+    return expr;
+  }
+  if (cur_tok.type == TokenType::False) {
+    auto expr = std::make_unique<NumberExpr>(cur_tok.num_val);
+    next_token();
+    return expr;
+  }
   if (cur_tok.type == TokenType::Number) {
     auto expr = std::make_unique<NumberExpr>(cur_tok.num_val);
     next_token();

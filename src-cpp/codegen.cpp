@@ -23,6 +23,7 @@ Type *CodeGen::get_llvm_type(TypeKind kind) {
     case TypeKind::Void:    return Type::getVoidTy(Context);
     case TypeKind::Int:     return Type::getInt64Ty(Context);
     case TypeKind::Float:   return Type::getDoubleTy(Context);
+    case TypeKind::Bool:    return Type::getInt1Ty(Context);
     case TypeKind::String:  return PointerType::getUnqual(Context);
     case TypeKind::Cubical: return Type::getInt64Ty(Context);
     case TypeKind::Struct:  return nullptr; // must use annotation overload
@@ -674,6 +675,9 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
     case TypeKind::Float:
       init = eval_float_init(decl->init_expr.get());
       break;
+    case TypeKind::Bool:
+      init = eval_expr(decl->init_expr.get(), Type::getInt1Ty(Context));
+      break;
     case TypeKind::String:
       init = eval_string_init(decl->init_expr.get());
       break;
@@ -724,6 +728,9 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
       break;
     case TypeKind::Float:
       init = eval_float_init(stmt->init_expr.get());
+      break;
+    case TypeKind::Bool:
+      init = eval_expr(stmt->init_expr.get(), Type::getInt1Ty(Context));
       break;
     case TypeKind::String:
       init = eval_string_init(stmt->init_expr.get());

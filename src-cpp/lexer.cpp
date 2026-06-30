@@ -184,9 +184,12 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
   if (id == "int") return {TokenType::Int, id, 0, l, c};
   if (id == "float") return {TokenType::Float, id, 0, l, c};
+  if (id == "bool") return {TokenType::Bool, id, 0, l, c};
   if (id == "string") return {TokenType::String, id, 0, l, c};
   if (id == "void") return {TokenType::Void, id, 0, l, c};
   if (id == "struct") return {TokenType::Struct, id, 0, l, c};
+  if (id == "true") return {TokenType::True, id, 1.0, l, c};
+  if (id == "false") return {TokenType::False, id, 0.0, l, c};
 
   return {TokenType::Identifier, id, 0, l, c};
 }

@@ -12,6 +12,7 @@ enum class TypeKind {
   Void,
   Int,
   Float,
+  Bool,
   String,
   Cubical,
   Struct,

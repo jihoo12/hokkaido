@@ -13,6 +13,7 @@ int         64-bit signed integer
 float       64-bit floating point
 string      String (internal)
 void        No return value (functions only)
+bool        true or false
 ```
 
 Pointer types are written with `*`:
@@ -29,6 +30,7 @@ let x: int = 42             Integer variable
 let y: float = 3.14         Float variable
 let s: string = "hello"     String variable
 let p: int* = &x            Pointer variable (address of x)
+let b: bool = true          true
 ```
 
 Variables are mutable; assignment uses `=`.
