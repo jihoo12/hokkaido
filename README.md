@@ -3,3 +3,6 @@ the variable definition is
 and for cubical type
 `let cubical name = inline cubical source or cubical source file` form
 and the cubical engine exist in ./src/cubical
+
+## LICENSE
+[LICENSE](LICENSE)
