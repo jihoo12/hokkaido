@@ -91,16 +91,16 @@ if condition {
 ## For loop
 
 ```
-for let i: int = 0, i < 10, i = i + 1 {
+for let i: int = 0; i < 10; i = i + 1 {
   // body
 }
 ```
 
-Three comma-separated parts: init, condition, update. Any part can be omitted:
+Three semicolon-separated parts: init, condition, update. Any part can be omitted:
 
 ```
-for , condition, { }       // while-like
-for , , { }                // infinite loop
+for ; condition; { }       // while-like
+for ;; { }                 // infinite loop
 ```
 
 ## Assignment

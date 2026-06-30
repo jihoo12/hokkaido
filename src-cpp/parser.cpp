@@ -417,27 +417,27 @@ std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
   if (cur_tok.type == TokenType::Let) {
     init = parse_let_stmt();
     if (!init) return nullptr;
-  } else if (cur_tok.type != TokenType::Comma) {
+  } else if (cur_tok.type != TokenType::Semicolon) {
     auto expr = parse_expr();
     if (!expr) return nullptr;
     init = std::make_unique<ExprStmt>(std::move(expr));
   }
 
-  if (cur_tok.type != TokenType::Comma) {
-    set_error("expected ',' after for init");
+  if (cur_tok.type != TokenType::Semicolon) {
+    set_error("expected ';' after for init");
     return nullptr;
   }
   next_token();
   skip_newlines();
 
   std::unique_ptr<Expr> cond;
-  if (cur_tok.type != TokenType::Comma) {
+  if (cur_tok.type != TokenType::Semicolon) {
     cond = parse_expr();
     if (!cond) return nullptr;
   }
 
-  if (cur_tok.type != TokenType::Comma) {
-    set_error("expected ',' after for condition");
+  if (cur_tok.type != TokenType::Semicolon) {
+    set_error("expected ';' after for condition");
     return nullptr;
   }
   next_token();
