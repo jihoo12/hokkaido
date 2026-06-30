@@ -26,6 +26,7 @@ class CodeGen {
 
   std::map<std::string, llvm::AllocaInst *> named_values;
   std::map<std::string, TypeKind> named_types;
+  std::map<std::string, TypeAnnotation> named_type_anns;
 
   // Registered struct types (name -> LLVM struct type)
   std::map<std::string, llvm::StructType *> struct_types;
@@ -55,14 +56,22 @@ private:
   int get_struct_field_index(const std::string &struct_name, const std::string &field_name);
   TypeAnnotation get_struct_field_type(const std::string &struct_name, const std::string &field_name);
 
+  // Resolve the type annotation for an expression without evaluating it
+  TypeAnnotation resolve_expr_type(Expr *expr);
+
+  // Get a pointer to the memory location of an lvalue expression
+  llvm::Value *get_lvalue_ptr(Expr *expr, llvm::Type **out_type = nullptr);
+
   // Let declarations / statements
   bool gen_let_decl(LetDecl *decl);
   bool gen_let_stmt(LetStmt *stmt);
   bool alloc_and_store(const std::string &name, TypeKind kind,
-                       llvm::Value *init, llvm::Type *llvm_type);
+                       llvm::Value *init, llvm::Type *llvm_type,
+                       TypeAnnotation ann = {});
   bool alloc_and_store_array(const std::string &name, TypeKind kind,
                              int array_size, llvm::ArrayType *array_type,
-                             llvm::Value *init);
+                             llvm::Value *init,
+                             TypeAnnotation ann = {});
 
   // Functions
   bool gen_fn_decl(FnDecl *decl);

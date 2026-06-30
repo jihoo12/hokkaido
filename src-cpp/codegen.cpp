@@ -101,6 +101,109 @@ int CodeGen::get_struct_field_index(const std::string &struct_name,
   return -1;
 }
 
+TypeAnnotation CodeGen::resolve_expr_type(Expr *expr) {
+  if (auto *id = dynamic_cast<IdentExpr *>(expr)) {
+    auto it = named_type_anns.find(id->name);
+    if (it != named_type_anns.end())
+      return it->second;
+    // Fallback: check named_types
+    auto kt = named_types.find(id->name);
+    if (kt != named_types.end())
+      return {kt->second};
+    return {TypeKind::Void};
+  }
+  if (auto *field = dynamic_cast<FieldAccessExpr *>(expr)) {
+    TypeAnnotation base = resolve_expr_type(field->object.get());
+    if (base.kind == TypeKind::Void || base.kind == TypeKind::Struct)
+      return get_struct_field_type(base.struct_name, field->field);
+    return {TypeKind::Void};
+  }
+  if (auto *deref = dynamic_cast<DerefExpr *>(expr)) {
+    TypeAnnotation base = resolve_expr_type(deref->operand.get());
+    if (base.pointer_depth > 0) {
+      base.pointer_depth--;
+      return base;
+    }
+    return {TypeKind::Void};
+  }
+  if (auto *sub = dynamic_cast<SubscriptExpr *>(expr)) {
+    TypeAnnotation base = resolve_expr_type(sub->array.get());
+    if (base.array_size > 0) {
+      base.array_size = 0;
+      return base;
+    }
+    // Also handle pointer-to-array or similar
+    return {base.kind};
+  }
+  return {TypeKind::Void};
+}
+
+Value *CodeGen::get_lvalue_ptr(Expr *expr, Type **out_type) {
+  if (auto *id = dynamic_cast<IdentExpr *>(expr)) {
+    auto it = named_values.find(id->name);
+    if (it == named_values.end()) {
+      errs() << "Error: undefined variable '" << id->name << "'\n";
+      return nullptr;
+    }
+    if (out_type) *out_type = it->second->getAllocatedType();
+    return it->second;
+  }
+  if (auto *deref = dynamic_cast<DerefExpr *>(expr)) {
+    Value *ptr = eval_expr(deref->operand.get(), PointerType::getUnqual(Context));
+    if (!ptr) return nullptr;
+    if (out_type) {
+      TypeAnnotation ann = resolve_expr_type(deref);
+      *out_type = get_llvm_type(ann);
+    }
+    return ptr;
+  }
+  if (auto *sub = dynamic_cast<SubscriptExpr *>(expr)) {
+    Type *arr_type = nullptr;
+    Value *arr_ptr = get_lvalue_ptr(sub->array.get(), &arr_type);
+    if (!arr_ptr) return nullptr;
+    Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
+    if (!index) return nullptr;
+    Value *indices[] = {
+      ConstantInt::get(Type::getInt64Ty(Context), 0),
+      index
+    };
+    Value *elem_ptr = Builder.CreateGEP(arr_type, arr_ptr, indices, "elem_ptr");
+    if (out_type) {
+      if (auto *arr = dyn_cast<ArrayType>(arr_type))
+        *out_type = arr->getElementType();
+    }
+    return elem_ptr;
+  }
+  if (auto *field = dynamic_cast<FieldAccessExpr *>(expr)) {
+    Type *struct_type = nullptr;
+    Value *struct_ptr = get_lvalue_ptr(field->object.get(), &struct_type);
+    if (!struct_ptr) return nullptr;
+
+    StructType *st = dyn_cast<StructType>(struct_type);
+    if (!st) {
+      errs() << "Error: field access on non-struct type\n";
+      return nullptr;
+    }
+
+    std::string struct_name = st->getName().str();
+    int field_idx = get_struct_field_index(struct_name, field->field);
+    if (field_idx < 0) {
+      errs() << "Error: struct '" << struct_name << "' has no field named '"
+             << field->field << "'\n";
+      return nullptr;
+    }
+
+    Value *field_ptr = Builder.CreateStructGEP(
+        struct_type, struct_ptr, field_idx, field->field);
+    if (out_type) {
+      TypeAnnotation field_ann = get_struct_field_type(struct_name, field->field);
+      *out_type = get_llvm_type(field_ann);
+    }
+    return field_ptr;
+  }
+  return nullptr;
+}
+
 TypeAnnotation CodeGen::get_struct_field_type(const std::string &struct_name,
                                                const std::string &field_name) {
   auto it = struct_fields.find(struct_name);
@@ -260,16 +363,15 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   }
 
   if (auto *addr = dynamic_cast<AddressOfExpr *>(expr)) {
-    if (auto *id = dynamic_cast<IdentExpr *>(addr->operand.get())) {
-      auto it = named_values.find(id->name);
-      if (it == named_values.end()) {
-        errs() << "Error: undefined variable '" << id->name << "'\n";
-        return nullptr;
-      }
-      return it->second;
+    Type *ptr_type = nullptr;
+    Value *lvalue_ptr = get_lvalue_ptr(addr->operand.get(), &ptr_type);
+    if (!lvalue_ptr) {
+      errs() << "Error: address-of requires an lvalue expression\n";
+      return nullptr;
     }
-    errs() << "Error: address-of requires a variable\n";
-    return nullptr;
+    if (!ptr_type)
+      ptr_type = lvalue_ptr->getType();
+    return lvalue_ptr;
   }
 
   if (auto *deref = dynamic_cast<DerefExpr *>(expr)) {
@@ -289,17 +391,10 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   }
 
   if (auto *sub = dynamic_cast<SubscriptExpr *>(expr)) {
-    // Get the array pointer from the variable
-    AllocaInst *array_alloca = nullptr;
-    if (auto *id = dynamic_cast<IdentExpr *>(sub->array.get())) {
-      auto it = named_values.find(id->name);
-      if (it == named_values.end()) {
-        errs() << "Error: undefined variable '" << id->name << "'\n";
-        return nullptr;
-      }
-      array_alloca = it->second;
-    } else {
-      errs() << "Error: subscript target must be a variable\n";
+    Type *arr_type = nullptr;
+    Value *arr_ptr = get_lvalue_ptr(sub->array.get(), &arr_type);
+    if (!arr_ptr) {
+      errs() << "Error: subscript target must be an lvalue\n";
       return nullptr;
     }
 
@@ -310,48 +405,42 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       ConstantInt::get(Type::getInt64Ty(Context), 0),
       index
     };
-    Value *elem_ptr = Builder.CreateGEP(
-        array_alloca->getAllocatedType(), array_alloca, indices, "elem_ptr");
+    Value *elem_ptr = Builder.CreateGEP(arr_type, arr_ptr, indices, "elem_ptr");
     return Builder.CreateLoad(expected_type, elem_ptr);
   }
 
   // Field access: obj.field
   if (auto *field = dynamic_cast<FieldAccessExpr *>(expr)) {
-    // Get the parent struct pointer
-    AllocaInst *obj_alloca = nullptr;
-    if (auto *id = dynamic_cast<IdentExpr *>(field->object.get())) {
-      auto it = named_values.find(id->name);
-      if (it == named_values.end()) {
-        errs() << "Error: undefined variable '" << id->name << "'\n";
-        return nullptr;
-      }
-      obj_alloca = it->second;
-    } else {
-      errs() << "Error: field access target must be a variable\n";
+    // Resolve the base expression to get a struct value
+    TypeAnnotation base_ann = resolve_expr_type(field->object.get());
+    if (base_ann.kind != TypeKind::Struct) {
+      errs() << "Error: field access on non-struct expression\n";
       return nullptr;
     }
 
-    Type *alloca_type = obj_alloca->getAllocatedType();
-    StructType *st = dyn_cast<StructType>(alloca_type);
-    if (!st) {
-      errs() << "Error: field access on non-struct type. Allocated type: ";
-      alloca_type->print(errs());
-      errs() << "\n";
-      return nullptr;
-    }
+    // Evaluate the base expression to get the struct value
+    Type *base_llvm_type = get_llvm_type(base_ann);
+    if (!base_llvm_type) return nullptr;
+    Value *obj_val = eval_expr(field->object.get(), base_llvm_type);
+    if (!obj_val) return nullptr;
 
-    // Find field index by using the struct fields directly from name
-    std::string struct_name = st->getName().str();
-    int field_idx = get_struct_field_index(struct_name, field->field);
+    // Find field index
+    int field_idx = get_struct_field_index(base_ann.struct_name, field->field);
     if (field_idx < 0) {
-      errs() << "Error: struct '" << struct_name << "' has no field named '"
+      errs() << "Error: struct '" << base_ann.struct_name << "' has no field named '"
              << field->field << "'\n";
       return nullptr;
     }
 
-    Value *loaded = Builder.CreateLoad(alloca_type, obj_alloca, field->field);
-    Value *extracted = Builder.CreateExtractValue(loaded, {(unsigned)field_idx}, field->field);
-    return extracted;
+    // Get the field's LLVM type directly from the struct type
+    Type *obj_type = obj_val->getType();
+    StructType *st = dyn_cast<StructType>(obj_type);
+    if (!st) {
+      errs() << "Error: field access target is not a struct type\n";
+      return nullptr;
+    }
+
+    return Builder.CreateExtractValue(obj_val, {(unsigned)field_idx}, field->field);
   }
 
   if (auto *arr_lit = dynamic_cast<ArrayLitExpr *>(expr)) {
@@ -461,103 +550,13 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     Value *val = eval_expr(assign->value.get(), expected_type);
     if (!val) return nullptr;
 
-    // Handle field access assignment: obj.field = val
-    if (auto *field = dynamic_cast<FieldAccessExpr *>(assign->target.get())) {
-      AllocaInst *obj_alloca = nullptr;
-      if (auto *id = dynamic_cast<IdentExpr *>(field->object.get())) {
-        auto it = named_values.find(id->name);
-        if (it == named_values.end()) {
-          errs() << "Error: undefined variable '" << id->name << "'\n";
-          return nullptr;
-        }
-        obj_alloca = it->second;
-      } else {
-        errs() << "Error: field access target must be a variable\n";
-        return nullptr;
-      }
-
-      Type *alloca_type = obj_alloca->getAllocatedType();
-      StructType *st = dyn_cast<StructType>(alloca_type);
-      if (!st) {
-        errs() << "Error: field access on non-struct type\n";
-        return nullptr;
-      }
-
-      // Find field index by matching the LLVM StructType pointer
-      int field_idx = -1;
-      for (auto &[sname, fields] : struct_fields) {
-        StructType *candidate = struct_types[sname];
-        if (candidate == st) {
-          for (size_t fi = 0; fi < fields.size(); fi++) {
-            if (fields[fi].first == field->field) {
-              field_idx = (int)fi;
-              break;
-            }
-          }
-          break;
-        }
-      }
-
-      if (field_idx < 0) {
-        errs() << "Error: struct has no field named '" << field->field << "'\n";
-        return nullptr;
-      }
-
-      Value *field_ptr = Builder.CreateStructGEP(
-          alloca_type, obj_alloca, field_idx, field->field);
-      Builder.CreateStore(val, field_ptr);
-      return val;
+    Type *target_type = nullptr;
+    Value *target_ptr = get_lvalue_ptr(assign->target.get(), &target_type);
+    if (!target_ptr) {
+      errs() << "Error: invalid assignment target\n";
+      return nullptr;
     }
-
-    // Handle subscript assignment: arr[i] = val
-    if (auto *sub = dynamic_cast<SubscriptExpr *>(assign->target.get())) {
-      AllocaInst *array_alloca = nullptr;
-      if (auto *id = dynamic_cast<IdentExpr *>(sub->array.get())) {
-        auto it = named_values.find(id->name);
-        if (it == named_values.end()) {
-          errs() << "Error: undefined variable '" << id->name << "'\n";
-          return nullptr;
-        }
-        array_alloca = it->second;
-      } else {
-        errs() << "Error: subscript target must be a variable\n";
-        return nullptr;
-      }
-      Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
-      if (!index) return nullptr;
-
-      Value *indices[] = {
-        ConstantInt::get(Type::getInt64Ty(Context), 0),
-        index
-      };
-      Value *elem_ptr = Builder.CreateGEP(
-          array_alloca->getAllocatedType(), array_alloca, indices, "elem_ptr");
-      Builder.CreateStore(val, elem_ptr);
-      return val;
-    }
-
-    if (auto *id = dynamic_cast<IdentExpr *>(assign->target.get())) {
-      auto it = named_values.find(id->name);
-      if (it == named_values.end()) {
-        errs() << "Error: undefined variable '" << id->name << "'\n";
-        return nullptr;
-      }
-      Builder.CreateStore(val, it->second);
-    } else if (auto *deref = dynamic_cast<DerefExpr *>(assign->target.get())) {
-      Value *ptr = nullptr;
-      if (auto *id2 = dynamic_cast<IdentExpr *>(deref->operand.get())) {
-        auto it = named_values.find(id2->name);
-        if (it == named_values.end()) {
-          errs() << "Error: undefined variable '" << id2->name << "'\n";
-          return nullptr;
-        }
-        ptr = Builder.CreateLoad(it->second->getAllocatedType(), it->second, id2->name);
-      } else {
-        ptr = eval_expr(deref->operand.get(), PointerType::getUnqual(Context));
-      }
-      if (!ptr) return nullptr;
-      Builder.CreateStore(val, ptr);
-    }
+    Builder.CreateStore(val, target_ptr);
     return val;
   }
 
@@ -669,21 +668,27 @@ Value *CodeGen::eval_array_literal(ArrayLitExpr *arr, ArrayType *array_type) {
 // -------------------------------------------------------------------------
 
 bool CodeGen::alloc_and_store(const std::string &name, TypeKind kind,
-                               Value *init, Type *llvm_type) {
+                               Value *init, Type *llvm_type,
+                               TypeAnnotation ann) {
   AllocaInst *alloca = Builder.CreateAlloca(llvm_type, nullptr, name);
   Builder.CreateStore(init, alloca);
   named_values[name] = alloca;
   named_types[name] = kind;
+  if (kind == TypeKind::Struct)
+    named_type_anns[name] = ann;
   return true;
 }
 
 bool CodeGen::alloc_and_store_array(const std::string &name, TypeKind kind,
                                      int array_size, ArrayType *array_type,
-                                     Value *init) {
+                                     Value *init,
+                                     TypeAnnotation ann) {
   AllocaInst *alloca = Builder.CreateAlloca(array_type, nullptr, name);
   Builder.CreateStore(init, alloca);
   named_values[name] = alloca;
   named_types[name] = kind;
+  if (kind == TypeKind::Struct)
+    named_type_anns[name] = ann;
   return true;
 }
 
@@ -701,14 +706,28 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
     Value *init = eval_array_init(decl->init_expr.get(), arr_type);
     if (!init) return false;
     return alloc_and_store_array(decl->name, decl->type_ann.kind,
-                                  decl->type_ann.array_size, arr_type, init);
+                                  decl->type_ann.array_size, arr_type, init,
+                                  decl->type_ann);
   }
 
   // Handle struct types
   if (decl->type_ann.kind == TypeKind::Struct) {
-    // For structs, just zero-initialize
-    Value *init = ConstantAggregateZero::get(llvm_type);
-    return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type);
+    Value *init = nullptr;
+    if (decl->init_expr) {
+      // If the init is an IdentExpr referencing an undefined name (the
+      // placeholder convention `let p: Point = p`), skip evaluation and
+      // zero-initialize. Otherwise try to evaluate it — it might be
+      // another struct variable, a function call, etc.
+      bool skip = false;
+      if (auto *id = dynamic_cast<IdentExpr *>(decl->init_expr.get()))
+        skip = named_values.find(id->name) == named_values.end();
+      if (!skip)
+        init = eval_expr(decl->init_expr.get(), llvm_type);
+    }
+    if (!init)
+      init = ConstantAggregateZero::get(llvm_type);
+    return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type,
+                            decl->type_ann);
   }
 
   Value *init = nullptr;
@@ -717,7 +736,8 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
   if (decl->type_ann.pointer_depth > 0) {
     init = eval_expr(decl->init_expr.get(), llvm_type);
     if (!init) return false;
-    return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type);
+    return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type,
+                            decl->type_ann);
   }
 
   switch (decl->type_ann.kind) {
@@ -756,7 +776,8 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
       break;
   }
   if (!init) return false;
-  return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type);
+  return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type,
+                          decl->type_ann);
 }
 
 bool CodeGen::gen_let_stmt(LetStmt *stmt) {
@@ -769,13 +790,24 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
     Value *init = eval_array_init(stmt->init_expr.get(), arr_type);
     if (!init) return false;
     return alloc_and_store_array(stmt->name, stmt->type_ann.kind,
-                                  stmt->type_ann.array_size, arr_type, init);
+                                  stmt->type_ann.array_size, arr_type, init,
+                                  stmt->type_ann);
   }
 
   // Handle struct types
   if (stmt->type_ann.kind == TypeKind::Struct) {
-    Value *init = ConstantAggregateZero::get(llvm_type);
-    return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type);
+    Value *init = nullptr;
+    if (stmt->init_expr) {
+      bool skip = false;
+      if (auto *id = dynamic_cast<IdentExpr *>(stmt->init_expr.get()))
+        skip = named_values.find(id->name) == named_values.end();
+      if (!skip)
+        init = eval_expr(stmt->init_expr.get(), llvm_type);
+    }
+    if (!init)
+      init = ConstantAggregateZero::get(llvm_type);
+    return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type,
+                            stmt->type_ann);
   }
 
   Value *init = nullptr;
@@ -783,7 +815,8 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
   if (stmt->type_ann.pointer_depth > 0) {
     init = eval_expr(stmt->init_expr.get(), llvm_type);
     if (!init) return false;
-    return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type);
+    return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type,
+                            stmt->type_ann);
   }
 
   switch (stmt->type_ann.kind) {
@@ -821,7 +854,8 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
       break;
   }
   if (!init) return false;
-  return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type);
+  return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type,
+                          stmt->type_ann);
 }
 
 // -------------------------------------------------------------------------
@@ -835,8 +869,10 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
   // Save outer scope
   auto saved_values = std::move(named_values);
   auto saved_types = std::move(named_types);
+  auto saved_type_anns = std::move(named_type_anns);
   named_values.clear();
   named_types.clear();
+  named_type_anns.clear();
 
   // Allocate and store parameters
   size_t i = 0;
@@ -844,18 +880,22 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
     arg.setName(decl->params[i].name);
     AllocaInst *alloca = Builder.CreateAlloca(arg.getType(), nullptr, arg.getName());
     Builder.CreateStore(&arg, alloca);
-    named_values[std::string(arg.getName())] = alloca;
-    named_types[std::string(arg.getName())] = decl->params[i].type_ann.kind;
+    std::string pname = std::string(arg.getName());
+    named_values[pname] = alloca;
+    named_types[pname] = decl->params[i].type_ann.kind;
+    if (decl->params[i].type_ann.kind == TypeKind::Struct)
+      named_type_anns[pname] = decl->params[i].type_ann;
     i++;
   }
 
   // Generate body
   for (auto &stmt : decl->body) {
-    if (!gen_stmt(stmt.get())) {
-      named_values = std::move(saved_values);
-      named_types = std::move(saved_types);
-      return false;
-    }
+      if (!gen_stmt(stmt.get())) {
+        named_values = std::move(saved_values);
+        named_types = std::move(saved_types);
+        named_type_anns = std::move(saved_type_anns);
+        return false;
+      }
   }
 
   // If function doesn't return, add a default return
@@ -874,6 +914,7 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
   // Restore scope
   named_values = std::move(saved_values);
   named_types = std::move(saved_types);
+  named_type_anns = std::move(saved_type_anns);
   return true;
 }
 
