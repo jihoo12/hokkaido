@@ -100,4 +100,9 @@ private:
   llvm::Type *get_llvm_type(TypeKind kind);
   llvm::Type *get_llvm_type(const TypeAnnotation &ann);
 
+  // Pattern matching helpers
+  llvm::Value *gen_pattern_check(Pattern *pat, llvm::Value *val,
+                                  const TypeAnnotation &val_ann);
+  bool gen_pattern_bind(Pattern *pat, llvm::Value *val,
+                         const TypeAnnotation &val_ann);
 };

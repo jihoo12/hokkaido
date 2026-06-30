@@ -72,6 +72,10 @@ private:
   std::unique_ptr<Expr> parse_postfix(std::unique_ptr<Expr> left);
   std::unique_ptr<Expr> parse_call_rest(const std::string &name);
   std::unique_ptr<Expr> parse_array_literal();
+  std::unique_ptr<Expr> parse_match_expr();
+
+  // Patterns
+  std::unique_ptr<Pattern> parse_pattern();
 
   // Shared let helper
   bool parse_let_common(TypeAnnotation &ann, std::string &name,

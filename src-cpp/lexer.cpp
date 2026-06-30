@@ -79,6 +79,10 @@ Token Lexer::next_token() {
       advance(); advance();
       return {TokenType::Eq, "==", 0, l, c};
     }
+    if (pos + 1 < input.size() && input[pos + 1] == '>') {
+      advance(); advance();
+      return {TokenType::FatArrow, "=>", 0, l, c};
+    }
     advance();
     return {TokenType::Equals, "=", 0, l, c};
   }
@@ -197,6 +201,7 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "if") return {TokenType::If, id, 0, l, c};
   if (id == "else") return {TokenType::Else, id, 0, l, c};
   if (id == "for") return {TokenType::For, id, 0, l, c};
+  if (id == "match") return {TokenType::Match, id, 0, l, c};
   if (id == "null") return {TokenType::Null, id, 0, l, c};
   if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
   if (id == "int") return {TokenType::Int64, id, 0, l, c};

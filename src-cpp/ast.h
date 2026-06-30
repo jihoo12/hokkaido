@@ -112,6 +112,40 @@ struct FieldAccessExpr : Expr {
     : object(std::move(o)), field(f) {}
 };
 
+// Pattern matching
+
+struct Pattern {
+  virtual ~Pattern() = default;
+};
+
+struct WildcardPattern : Pattern {};
+
+struct LiteralPattern : Pattern {
+  std::unique_ptr<Expr> value;
+  LiteralPattern(std::unique_ptr<Expr> v) : value(std::move(v)) {}
+};
+
+struct VariablePattern : Pattern {
+  std::string name;
+  VariablePattern(const std::string &n) : name(n) {}
+};
+
+struct StructPattern : Pattern {
+  std::string struct_name;
+  // Each field: (field_name, sub_pattern)
+  std::vector<std::pair<std::string, std::unique_ptr<Pattern>>> fields;
+};
+
+struct MatchArm {
+  std::unique_ptr<Pattern> pattern;
+  std::unique_ptr<Expr> expr;
+};
+
+struct MatchExpr : Expr {
+  std::unique_ptr<Expr> value;
+  std::vector<MatchArm> arms;
+};
+
 struct Decl {
   virtual ~Decl() = default;
 };

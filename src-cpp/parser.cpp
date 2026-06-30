@@ -608,6 +608,7 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
       cur_tok.type == TokenType::StringLiteral ||
       cur_tok.type == TokenType::Identifier ||
       cur_tok.type == TokenType::Asm ||
+      cur_tok.type == TokenType::Match ||
       cur_tok.type == TokenType::LParen ||
       cur_tok.type == TokenType::LSquare ||
       cur_tok.type == TokenType::Minus ||
@@ -914,6 +915,9 @@ std::unique_ptr<Expr> Parser::parse_primary() {
     next_token();
     return expr;
   }
+  if (cur_tok.type == TokenType::Match) {
+    return parse_match_expr();
+  }
   set_error("expected expression");
   return nullptr;
 }
@@ -961,4 +965,129 @@ std::unique_ptr<Expr> Parser::parse_call_rest(const std::string &name) {
   expr->callee = name;
   expr->args = std::move(args);
   return expr;
+}
+
+std::unique_ptr<Expr> Parser::parse_match_expr() {
+  next_token(); // consume 'match'
+  auto value = parse_expr();
+  if (!value) return nullptr;
+  skip_newlines();
+  if (cur_tok.type != TokenType::LBrace) {
+    set_error("expected '{' after match expression");
+    return nullptr;
+  }
+  next_token(); // consume '{'
+  skip_newlines();
+
+  auto mexpr = std::make_unique<MatchExpr>();
+  mexpr->value = std::move(value);
+
+  while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
+    auto pattern = parse_pattern();
+    if (!pattern) return nullptr;
+    skip_newlines();
+    if (cur_tok.type != TokenType::FatArrow) {
+      set_error("expected '=>' after pattern in match arm");
+      return nullptr;
+    }
+    next_token(); // consume '=>'
+    skip_newlines();
+    auto body = parse_expr();
+    if (!body) return nullptr;
+    MatchArm arm;
+    arm.pattern = std::move(pattern);
+    arm.expr = std::move(body);
+    mexpr->arms.push_back(std::move(arm));
+    skip_newlines();
+    // Optional comma separator between arms
+    if (cur_tok.type == TokenType::Comma) {
+      next_token();
+      skip_newlines();
+    }
+  }
+  if (cur_tok.type != TokenType::RBrace) {
+    set_error("expected '}' to close match");
+    return nullptr;
+  }
+  next_token(); // consume '}'
+  return mexpr;
+}
+
+std::unique_ptr<Pattern> Parser::parse_pattern() {
+  if (cur_tok.type == TokenType::Identifier) {
+    std::string name = cur_tok.text;
+    next_token();
+    // Wildcard
+    if (name == "_")
+      return std::make_unique<WildcardPattern>();
+    // Struct pattern: Identifier { ... }
+    skip_newlines();
+    if (cur_tok.type == TokenType::LBrace) {
+      next_token(); // consume '{'
+      skip_newlines();
+      auto pat = std::make_unique<StructPattern>();
+      pat->struct_name = name;
+      while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
+        if (cur_tok.type != TokenType::Identifier) {
+          set_error("expected field name in struct pattern");
+          return nullptr;
+        }
+        std::string field_name = cur_tok.text;
+        next_token();
+        skip_newlines();
+        std::unique_ptr<Pattern> field_pat;
+        if (cur_tok.type == TokenType::Colon) {
+          next_token(); // consume ':'
+          skip_newlines();
+          field_pat = parse_pattern();
+          if (!field_pat) return nullptr;
+        } else {
+          // Shorthand: field_name acts as both the field name and variable binding
+          field_pat = std::make_unique<VariablePattern>(field_name);
+        }
+        pat->fields.push_back({field_name, std::move(field_pat)});
+        skip_newlines();
+        if (cur_tok.type == TokenType::Comma) {
+          next_token();
+          skip_newlines();
+        }
+      }
+      if (cur_tok.type != TokenType::RBrace) {
+        set_error("expected '}' to close struct pattern");
+        return nullptr;
+      }
+      next_token(); // consume '}'
+      return pat;
+    }
+    // Variable pattern
+    return std::make_unique<VariablePattern>(name);
+  }
+  if (cur_tok.type == TokenType::Number ||
+      cur_tok.type == TokenType::True ||
+      cur_tok.type == TokenType::False) {
+    auto expr = std::make_unique<NumberExpr>(cur_tok.num_val);
+    next_token();
+    return std::make_unique<LiteralPattern>(std::move(expr));
+  }
+  if (cur_tok.type == TokenType::StringLiteral) {
+    auto expr = std::make_unique<StringExpr>(cur_tok.text);
+    next_token();
+    return std::make_unique<LiteralPattern>(std::move(expr));
+  }
+  if (cur_tok.type == TokenType::Null) {
+    next_token();
+    return std::make_unique<LiteralPattern>(std::make_unique<NullExpr>());
+  }
+  if (cur_tok.type == TokenType::Minus) {
+    next_token();
+    if (cur_tok.type != TokenType::Number) {
+      set_error("expected number after '-' in pattern");
+      return nullptr;
+    }
+    auto expr = std::make_unique<NumberExpr>(-cur_tok.num_val);
+    next_token();
+    return std::make_unique<LiteralPattern>(std::move(expr));
+  }
+  set_error("expected pattern");
+  return nullptr;
 }

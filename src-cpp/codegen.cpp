@@ -519,6 +519,61 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     return Builder.CreateExtractValue(obj_val, {(unsigned)field_idx}, field->field);
   }
 
+  // Match expression
+  if (auto *match = dynamic_cast<MatchExpr *>(expr)) {
+    TypeAnnotation val_ann = resolve_expr_type(match->value.get());
+    Type *val_type = get_llvm_type(val_ann);
+    if (!val_type) val_type = expected_type;
+
+    Value *val = eval_expr(match->value.get(), val_type);
+    if (!val) return nullptr;
+
+    auto saved_named_values = named_values;
+    Function *fn = Builder.GetInsertBlock()->getParent();
+
+    // Use alloca instead of phi to avoid SSA dominance issues with nested matches
+    AllocaInst *result_alloca = Builder.CreateAlloca(expected_type, nullptr, "match_result");
+
+    BasicBlock *merge_bb = BasicBlock::Create(Context, "match_merge", fn);
+    BasicBlock *else_bb = BasicBlock::Create(Context, "match_else", fn);
+    BasicBlock *current_bb = Builder.GetInsertBlock();
+
+    for (size_t i = 0; i < match->arms.size(); i++) {
+      auto &arm = match->arms[i];
+      bool is_last = (i == match->arms.size() - 1);
+
+      BasicBlock *body_bb = BasicBlock::Create(Context, "arm_body", fn);
+      BasicBlock *next_bb = is_last ? else_bb
+                                     : BasicBlock::Create(Context, "arm_check", fn);
+
+      Builder.SetInsertPoint(current_bb);
+      Value *cond = gen_pattern_check(arm.pattern.get(), val, val_ann);
+      if (!cond) return nullptr;
+
+      Builder.CreateCondBr(cond, body_bb, next_bb);
+
+      Builder.SetInsertPoint(body_bb);
+      named_values = saved_named_values;
+      if (!gen_pattern_bind(arm.pattern.get(), val, val_ann)) return nullptr;
+
+      Value *arm_val = eval_expr(arm.expr.get(), expected_type);
+      if (!arm_val) return nullptr;
+      Builder.CreateStore(arm_val, result_alloca);
+      Builder.CreateBr(merge_bb);
+
+      current_bb = next_bb;
+    }
+
+    // else block: store default zero value
+    Builder.SetInsertPoint(else_bb);
+    Builder.CreateStore(Constant::getNullValue(expected_type), result_alloca);
+    Builder.CreateBr(merge_bb);
+
+    Builder.SetInsertPoint(merge_bb);
+    named_values = std::move(saved_named_values);
+    return Builder.CreateLoad(expected_type, result_alloca);
+  }
+
   if (auto *arr_lit = dynamic_cast<ArrayLitExpr *>(expr)) {
     // Array literals are only valid when a destination array type is known
     if (auto *arr_type = dyn_cast<ArrayType>(expected_type)) {
@@ -1156,4 +1211,92 @@ bool CodeGen::gen_for_stmt(ForStmt *stmt) {
 
   Builder.SetInsertPoint(end_bb);
   return true;
+}
+
+// -------------------------------------------------------------------------
+// Pattern matching helpers
+// -------------------------------------------------------------------------
+
+Value *CodeGen::gen_pattern_check(Pattern *pat, Value *val,
+                                   const TypeAnnotation &val_ann) {
+  if (auto *wc = dynamic_cast<WildcardPattern *>(pat)) {
+    return ConstantInt::getTrue(Context);
+  }
+
+  if (auto *lit = dynamic_cast<LiteralPattern *>(pat)) {
+    Value *lit_val = eval_expr(lit->value.get(), val->getType());
+    if (!lit_val) return nullptr;
+    if (val->getType()->isIntegerTy())
+      return Builder.CreateICmpEQ(val, lit_val);
+    if (val->getType()->isFPOrFPVectorTy())
+      return Builder.CreateFCmpOEQ(val, lit_val);
+    if (val->getType()->isPointerTy())
+      return Builder.CreateICmpEQ(val, lit_val);
+    errs() << "Error: unsupported type for literal pattern\n";
+    return nullptr;
+  }
+
+  if (auto *var = dynamic_cast<VariablePattern *>(pat)) {
+    return ConstantInt::getTrue(Context);
+  }
+
+  if (auto *sp = dynamic_cast<StructPattern *>(pat)) {
+    StructType *st = dyn_cast<StructType>(val->getType());
+    if (!st) {
+      errs() << "Error: struct pattern on non-struct value\n";
+      return nullptr;
+    }
+    Value *cond = ConstantInt::getTrue(Context);
+    for (auto &[field_name, sub_pat] : sp->fields) {
+      int idx = get_struct_field_index(sp->struct_name, field_name);
+      if (idx < 0) {
+        errs() << "Error: struct '" << sp->struct_name << "' has no field '"
+               << field_name << "'\n";
+        return nullptr;
+      }
+      Value *field_val = Builder.CreateExtractValue(val, {(unsigned)idx}, field_name);
+      TypeAnnotation field_ann = get_struct_field_type(sp->struct_name, field_name);
+      Value *sub_cond = gen_pattern_check(sub_pat.get(), field_val, field_ann);
+      if (!sub_cond) return nullptr;
+      cond = Builder.CreateAnd(cond, sub_cond);
+    }
+    return cond;
+  }
+
+  errs() << "Error: unknown pattern type\n";
+  return nullptr;
+}
+
+bool CodeGen::gen_pattern_bind(Pattern *pat, Value *val,
+                                const TypeAnnotation &val_ann) {
+  if (auto *wc = dynamic_cast<WildcardPattern *>(pat)) {
+    return true;
+  }
+
+  if (auto *lit = dynamic_cast<LiteralPattern *>(pat)) {
+    return true;
+  }
+
+  if (auto *var = dynamic_cast<VariablePattern *>(pat)) {
+    Type *ty = val->getType();
+    AllocaInst *alloca = Builder.CreateAlloca(ty, nullptr, var->name);
+    named_values[var->name] = alloca;
+    Builder.CreateStore(val, alloca);
+    return true;
+  }
+
+  if (auto *sp = dynamic_cast<StructPattern *>(pat)) {
+    for (auto &[field_name, sub_pat] : sp->fields) {
+      int idx = get_struct_field_index(sp->struct_name, field_name);
+      if (idx < 0) return false;
+      Value *field_val = Builder.CreateExtractValue(val, {(unsigned)idx}, field_name);
+      TypeAnnotation field_ann = get_struct_field_type(sp->struct_name, field_name);
+      if (!gen_pattern_bind(sub_pat.get(), field_val, field_ann))
+        return false;
+    }
+    return true;
+  }
+
+  errs() << "Error: unknown pattern type in bind\n";
+  return false;
 }

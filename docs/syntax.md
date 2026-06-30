@@ -14,6 +14,7 @@
 - [Comparison operators](#comparison-operators)
 - [Arithmetic operators](#arithmetic-operators)
 - [Function calls](#function-calls)
+- [Match](#match)
 - [Arrays](#arrays)
 - [Structs](#structs)
 - [Namespaces](#namespaces)
@@ -228,6 +229,46 @@ let z: int = add(1, 2)          Function call
 ```
 
 Arguments are evaluated left to right and coerced to each parameter's declared type.
+
+## Match
+
+```
+match expr {
+    pattern => expr,
+    pattern => expr,
+    ...
+}
+```
+
+`match` evaluates the subject expression and tries each arm's pattern in order. The first
+matching arm's expression is evaluated and becomes the value of the whole match. If no arm
+matches, the result is zero.
+
+### Patterns
+
+```
+_                           Wildcard — matches anything, binds nothing
+123                         Literal — matches an exact integer/float/string/null
+name                        Variable — matches anything, binds the value to name
+Point { x: 0, y: _ }       Struct — matches fields against sub-patterns
+Point { x, y }              Struct — shorthand for `Point { x: x, y: y }`
+```
+
+### Examples
+
+```
+fn classify(p: Point) -> int {
+  return match p {
+    Point { x: 0, y: 0 } => 1,     // origin
+    Point { x: 0, y } => 2,        // on y-axis, bind y
+    Point { x, y: 0 } => 3,        // on x-axis, bind x
+    Point { x, y } => x + y,       // somewhere else
+  }
+}
+```
+
+`match` is an expression and can appear wherever any other expression is valid — in a return,
+an assignment, a let initializer, or nested inside another match.
 
 ## Arrays
 
