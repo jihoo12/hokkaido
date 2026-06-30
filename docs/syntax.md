@@ -126,10 +126,18 @@ if condition {
 } else {
   // else branch
 }
+
+if condition {
+  // then branch
+} else if other_condition {
+  // else-if branch
+} else {
+  // else branch
+}
 ```
 
-`condition` is any expression; nonzero is treated as true. There is no `else if` keyword — chain
-with a nested `if` inside the `else` block:
+`condition` is any expression; nonzero is treated as true. `else if` chains as far as you
+like, ending in an optional final `else`.
 
 ```
 if a {

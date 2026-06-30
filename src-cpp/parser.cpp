@@ -640,8 +640,18 @@ std::unique_ptr<IfStmt> Parser::parse_if_stmt() {
   if (cur_tok.type == TokenType::Else) {
     next_token(); // consume 'else'
     skip_newlines();
-    else_branch = parse_block();
-    if (has_error) return nullptr;
+    if (cur_tok.type == TokenType::If) {
+      // `else if ...` chains: parse the nested if as a single statement
+      // rather than requiring a `{ }` block. gen_if_stmt() runs
+      // else_branch through gen_stmt(), which dynamic_casts back to
+      // IfStmt and recurses, so no codegen changes are needed.
+      auto elseif_stmt = parse_if_stmt();
+      if (!elseif_stmt) return nullptr;
+      else_branch.push_back(std::move(elseif_stmt));
+    } else {
+      else_branch = parse_block();
+      if (has_error) return nullptr;
+    }
   }
 
   auto stmt = std::make_unique<IfStmt>();
