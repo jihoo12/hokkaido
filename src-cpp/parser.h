@@ -50,7 +50,9 @@ private:
   std::unique_ptr<Expr> parse_multiplicative();
   std::unique_ptr<Expr> parse_unary();
   std::unique_ptr<Expr> parse_primary();
+  std::unique_ptr<Expr> parse_postfix(std::unique_ptr<Expr> left);
   std::unique_ptr<Expr> parse_call_rest(const std::string &name);
+  std::unique_ptr<Expr> parse_array_literal();
 
   // Shared let helper
   bool parse_let_common(TypeAnnotation &ann, std::string &name,

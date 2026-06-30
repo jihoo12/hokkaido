@@ -55,6 +55,8 @@ Token Lexer::next_token() {
   if (ch == '&') { advance(); return {TokenType::Ampersand, "&", 0, l, c}; }
   if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
   if (ch == '/') { advance(); return {TokenType::Slash, "/", 0, l, c}; }
+  if (ch == '[') { advance(); return {TokenType::LSquare, "[", 0, l, c}; }
+  if (ch == ']') { advance(); return {TokenType::RSquare, "]", 0, l, c}; }
 
   // Multi-character tokens
   if (ch == '=') {

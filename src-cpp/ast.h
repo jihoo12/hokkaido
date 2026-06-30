@@ -19,6 +19,7 @@ enum class TypeKind {
 struct TypeAnnotation {
   TypeKind kind;
   int pointer_depth = 0;
+  int array_size = 0; // 0 means not an array
 };
 
 enum class BinOp {
@@ -84,6 +85,17 @@ struct AddressOfExpr : Expr {
 struct DerefExpr : Expr {
   std::unique_ptr<Expr> operand;
   DerefExpr(std::unique_ptr<Expr> o) : operand(std::move(o)) {}
+};
+
+struct SubscriptExpr : Expr {
+  std::unique_ptr<Expr> array;
+  std::unique_ptr<Expr> index;
+  SubscriptExpr(std::unique_ptr<Expr> a, std::unique_ptr<Expr> i)
+    : array(std::move(a)), index(std::move(i)) {}
+};
+
+struct ArrayLitExpr : Expr {
+  std::vector<std::unique_ptr<Expr>> elements;
 };
 
 struct Decl {

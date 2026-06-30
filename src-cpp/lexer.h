@@ -20,6 +20,7 @@ enum class TokenType {
   Semicolon, Comma, Colon,
   Newline,
   LParen, RParen, LBrace, RBrace,
+  LSquare, RSquare,
   Plus, Minus, Star, Slash, Ampersand,
 };
 

@@ -42,6 +42,9 @@ private:
   bool gen_let_stmt(LetStmt *stmt);
   bool alloc_and_store(const std::string &name, TypeKind kind,
                        llvm::Value *init, llvm::Type *llvm_type);
+  bool alloc_and_store_array(const std::string &name, TypeKind kind,
+                             int array_size, llvm::ArrayType *array_type,
+                             llvm::Value *init);
 
   // Functions
   bool gen_fn_decl(FnDecl *decl);
@@ -61,6 +64,10 @@ private:
   llvm::Value *eval_float_init(Expr *expr);
   llvm::Value *eval_string_init(Expr *expr);
   llvm::Value *eval_cubical_init(Expr *expr, std::string *debug_out);
+
+  // Array helpers
+  llvm::Value *eval_array_init(Expr *expr, llvm::ArrayType *array_type);
+  llvm::Value *eval_array_literal(ArrayLitExpr *arr, llvm::ArrayType *array_type);
 
   // LLVM type helpers
   llvm::Type *get_llvm_type(TypeKind kind);

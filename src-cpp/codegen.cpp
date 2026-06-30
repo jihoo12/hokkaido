@@ -31,6 +31,10 @@ Type *CodeGen::get_llvm_type(TypeKind kind) {
 
 Type *CodeGen::get_llvm_type(const TypeAnnotation &ann) {
   Type *base = get_llvm_type(ann.kind);
+  // If it's an array, wrap in ArrayType
+  if (ann.array_size > 0) {
+    return ArrayType::get(base, ann.array_size);
+  }
   for (int i = 0; i < ann.pointer_depth; i++)
     base = PointerType::getUnqual(Context);
   return base;
@@ -138,6 +142,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       errs() << "Error: undefined variable '" << id->name << "'\n";
       return nullptr;
     }
+    // For arrays, load the whole array value
     return Builder.CreateLoad(expected_type, it->second, id->name);
   }
 
@@ -172,6 +177,42 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     }
     if (!ptr) return nullptr;
     return Builder.CreateLoad(expected_type, ptr);
+  }
+
+  if (auto *sub = dynamic_cast<SubscriptExpr *>(expr)) {
+    // Get the array pointer from the variable
+    AllocaInst *array_alloca = nullptr;
+    if (auto *id = dynamic_cast<IdentExpr *>(sub->array.get())) {
+      auto it = named_values.find(id->name);
+      if (it == named_values.end()) {
+        errs() << "Error: undefined variable '" << id->name << "'\n";
+        return nullptr;
+      }
+      array_alloca = it->second;
+    } else {
+      errs() << "Error: subscript target must be a variable\n";
+      return nullptr;
+    }
+
+    Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
+    if (!index) return nullptr;
+
+    Value *indices[] = {
+      ConstantInt::get(Type::getInt64Ty(Context), 0),
+      index
+    };
+    Value *elem_ptr = Builder.CreateGEP(
+        array_alloca->getAllocatedType(), array_alloca, indices, "elem_ptr");
+    return Builder.CreateLoad(expected_type, elem_ptr);
+  }
+
+  if (auto *arr_lit = dynamic_cast<ArrayLitExpr *>(expr)) {
+    // Array literals are only valid when a destination array type is known
+    if (auto *arr_type = dyn_cast<ArrayType>(expected_type)) {
+      return eval_array_literal(arr_lit, arr_type);
+    }
+    // Fallback: evaluate as pointer (for pointer-type expected)
+    return ConstantPointerNull::get(cast<PointerType>(expected_type));
   }
 
   if (auto *un = dynamic_cast<UnaryExpr *>(expr)) {
@@ -251,6 +292,33 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     Value *val = eval_expr(assign->value.get(), expected_type);
     if (!val) return nullptr;
 
+    // Handle subscript assignment: arr[i] = val
+    if (auto *sub = dynamic_cast<SubscriptExpr *>(assign->target.get())) {
+      AllocaInst *array_alloca = nullptr;
+      if (auto *id = dynamic_cast<IdentExpr *>(sub->array.get())) {
+        auto it = named_values.find(id->name);
+        if (it == named_values.end()) {
+          errs() << "Error: undefined variable '" << id->name << "'\n";
+          return nullptr;
+        }
+        array_alloca = it->second;
+      } else {
+        errs() << "Error: subscript target must be a variable\n";
+        return nullptr;
+      }
+      Value *index = eval_expr(sub->index.get(), Type::getInt64Ty(Context));
+      if (!index) return nullptr;
+
+      Value *indices[] = {
+        ConstantInt::get(Type::getInt64Ty(Context), 0),
+        index
+      };
+      Value *elem_ptr = Builder.CreateGEP(
+          array_alloca->getAllocatedType(), array_alloca, indices, "elem_ptr");
+      Builder.CreateStore(val, elem_ptr);
+      return val;
+    }
+
     if (auto *id = dynamic_cast<IdentExpr *>(assign->target.get())) {
       auto it = named_values.find(id->name);
       if (it == named_values.end()) {
@@ -314,8 +382,7 @@ Value *CodeGen::eval_cubical_init(Expr *expr, std::string *debug_out) {
   std::string cubical_source = str->value;
 
   if (cubical_source.size() >= 4 &&
-      (cubical_source.substr(cubical_source.size() - 4) == ".cub" ||
-       cubical_source.substr(cubical_source.size() - 5) == ".uwuc")) {
+      (cubical_source.substr(cubical_source.size() - 4) == ".cub")) {
     std::ifstream ifs(cubical_source);
     if (!ifs) {
       errs() << "Error: cannot open cubical file '" << cubical_source << "'\n";
@@ -344,6 +411,43 @@ Value *CodeGen::eval_cubical_init(Expr *expr, std::string *debug_out) {
 }
 
 // -------------------------------------------------------------------------
+// Array initialization helpers
+// -------------------------------------------------------------------------
+
+Value *CodeGen::eval_array_init(Expr *expr, ArrayType *array_type) {
+  if (auto *arr_lit = dynamic_cast<ArrayLitExpr *>(expr)) {
+    return eval_array_literal(arr_lit, array_type);
+  }
+  // Fallback: zero-initialize
+  return ConstantAggregateZero::get(array_type);
+}
+
+Value *CodeGen::eval_array_literal(ArrayLitExpr *arr, ArrayType *array_type) {
+  Type *elem_type = array_type->getElementType();
+  unsigned num_elems = array_type->getNumElements();
+
+  std::vector<Constant *> init_vals;
+  for (size_t i = 0; i < arr->elements.size() && i < num_elems; i++) {
+    // For constants, try to get a Constant value directly
+    if (auto *num = dynamic_cast<NumberExpr *>(arr->elements[i].get())) {
+      if (elem_type->isDoubleTy())
+        init_vals.push_back(ConstantFP::get(elem_type, num->value));
+      else
+        init_vals.push_back(ConstantInt::get(elem_type, (int64_t)num->value));
+    } else {
+      // Non-constant element — we need to eval at runtime, but for now just zero
+      errs() << "Warning: non-constant array element, using zero\n";
+      init_vals.push_back(Constant::getNullValue(elem_type));
+    }
+  }
+  // Fill remaining slots with zero
+  while (init_vals.size() < num_elems) {
+    init_vals.push_back(Constant::getNullValue(elem_type));
+  }
+  return ConstantArray::get(array_type, init_vals);
+}
+
+// -------------------------------------------------------------------------
 // Alloca + store helper
 // -------------------------------------------------------------------------
 
@@ -356,12 +460,32 @@ bool CodeGen::alloc_and_store(const std::string &name, TypeKind kind,
   return true;
 }
 
+bool CodeGen::alloc_and_store_array(const std::string &name, TypeKind kind,
+                                     int array_size, ArrayType *array_type,
+                                     Value *init) {
+  AllocaInst *alloca = Builder.CreateAlloca(array_type, nullptr, name);
+  Builder.CreateStore(init, alloca);
+  named_values[name] = alloca;
+  named_types[name] = kind;
+  return true;
+}
+
 // -------------------------------------------------------------------------
 // Let declarations (top-level)
 // -------------------------------------------------------------------------
 
 bool CodeGen::gen_let_decl(LetDecl *decl) {
   Type *llvm_type = get_llvm_type(decl->type_ann);
+
+  // Handle array types
+  if (decl->type_ann.array_size > 0) {
+    ArrayType *arr_type = cast<ArrayType>(llvm_type);
+    Value *init = eval_array_init(decl->init_expr.get(), arr_type);
+    if (!init) return false;
+    return alloc_and_store_array(decl->name, decl->type_ann.kind,
+                                  decl->type_ann.array_size, arr_type, init);
+  }
+
   Value *init = nullptr;
   std::string debug;
 
@@ -395,6 +519,16 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
 
 bool CodeGen::gen_let_stmt(LetStmt *stmt) {
   Type *llvm_type = get_llvm_type(stmt->type_ann);
+
+  // Handle array types
+  if (stmt->type_ann.array_size > 0) {
+    ArrayType *arr_type = cast<ArrayType>(llvm_type);
+    Value *init = eval_array_init(stmt->init_expr.get(), arr_type);
+    if (!init) return false;
+    return alloc_and_store_array(stmt->name, stmt->type_ann.kind,
+                                  stmt->type_ann.array_size, arr_type, init);
+  }
+
   Value *init = nullptr;
 
   if (stmt->type_ann.pointer_depth > 0) {

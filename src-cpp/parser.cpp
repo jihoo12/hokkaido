@@ -73,6 +73,23 @@ TypeAnnotation Parser::parse_type_annotation() {
     ann.pointer_depth++;
     next_token();
   }
+
+  // Parse array size (e.g. int[10])
+  if (cur_tok.type == TokenType::LSquare) {
+    next_token(); // consume '['
+    if (cur_tok.type != TokenType::Number) {
+      set_error("expected array size as number literal");
+      return ann;
+    }
+    ann.array_size = (int)cur_tok.num_val;
+    next_token(); // consume number
+    if (cur_tok.type != TokenType::RSquare) {
+      set_error("expected ']' after array size");
+      return ann;
+    }
+    next_token(); // consume ']'
+  }
+
   return ann;
 }
 
@@ -268,6 +285,7 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
       cur_tok.type == TokenType::Identifier ||
       cur_tok.type == TokenType::Asm ||
       cur_tok.type == TokenType::LParen ||
+      cur_tok.type == TokenType::LSquare ||
       cur_tok.type == TokenType::Minus ||
       cur_tok.type == TokenType::Star ||
       cur_tok.type == TokenType::Ampersand ||
@@ -375,8 +393,9 @@ std::unique_ptr<Expr> Parser::parse_assignment() {
   if (cur_tok.type == TokenType::Equals) {
     bool is_ident = dynamic_cast<IdentExpr *>(left.get()) != nullptr;
     bool is_deref = dynamic_cast<DerefExpr *>(left.get()) != nullptr;
-    if (!is_ident && !is_deref) {
-      set_error("left side of assignment must be a variable or dereference");
+    bool is_subscript = dynamic_cast<SubscriptExpr *>(left.get()) != nullptr;
+    if (!is_ident && !is_deref && !is_subscript) {
+      set_error("left side of assignment must be a variable, dereference, or subscript");
       return nullptr;
     }
     next_token(); // consume '='
@@ -456,7 +475,25 @@ std::unique_ptr<Expr> Parser::parse_unary() {
     if (!operand) return nullptr;
     return std::make_unique<DerefExpr>(std::move(operand));
   }
-  return parse_primary();
+  auto prim = parse_primary();
+  if (!prim) return nullptr;
+  return parse_postfix(std::move(prim));
+}
+
+std::unique_ptr<Expr> Parser::parse_postfix(std::unique_ptr<Expr> left) {
+  // Handle subscript access: arr[i]
+  while (cur_tok.type == TokenType::LSquare) {
+    next_token(); // consume '['
+    auto index = parse_expr();
+    if (!index) return nullptr;
+    if (cur_tok.type != TokenType::RSquare) {
+      set_error("expected ']' after index expression");
+      return nullptr;
+    }
+    next_token(); // consume ']'
+    left = std::make_unique<SubscriptExpr>(std::move(left), std::move(index));
+  }
+  return left;
 }
 
 std::unique_ptr<Expr> Parser::parse_primary() {
@@ -479,6 +516,9 @@ std::unique_ptr<Expr> Parser::parse_primary() {
     auto operand = parse_unary();
     if (!operand) return nullptr;
     return std::make_unique<AddressOfExpr>(std::move(operand));
+  }
+  if (cur_tok.type == TokenType::LSquare) {
+    return parse_array_literal();
   }
   if (cur_tok.type == TokenType::Identifier) {
     std::string name = cur_tok.text;
@@ -521,6 +561,27 @@ std::unique_ptr<Expr> Parser::parse_primary() {
   }
   set_error("expected expression");
   return nullptr;
+}
+
+std::unique_ptr<Expr> Parser::parse_array_literal() {
+  next_token(); // consume '['
+  std::vector<std::unique_ptr<Expr>> elements;
+  while (cur_tok.type != TokenType::RSquare) {
+    if (!elements.empty()) {
+      if (cur_tok.type != TokenType::Comma) {
+        set_error("expected ',' or ']' in array literal");
+        return nullptr;
+      }
+      next_token();
+    }
+    auto el = parse_expr();
+    if (!el) return nullptr;
+    elements.push_back(std::move(el));
+  }
+  next_token(); // consume ']'
+  auto expr = std::make_unique<ArrayLitExpr>();
+  expr->elements = std::move(elements);
+  return expr;
 }
 
 std::unique_ptr<Expr> Parser::parse_call_rest(const std::string &name) {
