@@ -2,9 +2,11 @@
 
 void Parser::next_token() {
   cur_tok = lexer.next_token();
-  while (cur_tok.type == TokenType::Newline) {
+}
+
+void Parser::skip_newlines() {
+  while (cur_tok.type == TokenType::Newline)
     cur_tok = lexer.next_token();
-  }
 }
 
 void Parser::set_error(const std::string &msg) {
@@ -19,6 +21,7 @@ void Parser::set_error(const std::string &msg) {
 
 std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
   std::vector<std::unique_ptr<Decl>> decls;
+  skip_newlines();
   while (cur_tok.type != TokenType::Eof) {
     if (cur_tok.type == TokenType::Let) {
       auto decl = parse_let_decl();
@@ -32,6 +35,7 @@ std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
       set_error("expected declaration (let, fn)");
       break;
     }
+    skip_newlines();
   }
   return decls;
 }
@@ -61,6 +65,13 @@ TypeAnnotation Parser::parse_type_annotation() {
     set_error("expected type (void, int, float, string, cubical)");
     ann = {TypeKind::Int};
     has_error = true;
+    return ann;
+  }
+
+  // Parse pointer indirection levels (e.g. int* -> pointer to int)
+  while (cur_tok.type == TokenType::Star) {
+    ann.pointer_depth++;
+    next_token();
   }
   return ann;
 }
@@ -179,6 +190,7 @@ std::unique_ptr<FnDecl> Parser::parse_fn_decl() {
   TypeAnnotation return_type = parse_type_annotation();
   if (has_error) return nullptr;
 
+  skip_newlines();
   auto body = parse_block();
   if (has_error) return nullptr;
 
@@ -196,12 +208,14 @@ std::vector<std::unique_ptr<Stmt>> Parser::parse_block() {
     return {};
   }
   next_token(); // consume '{'
+  skip_newlines();
 
   std::vector<std::unique_ptr<Stmt>> stmts;
   while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
     auto stmt = parse_stmt();
     if (!stmt) break;
     stmts.push_back(std::move(stmt));
+    skip_newlines();
   }
   if (has_error) return {};
 
@@ -254,7 +268,10 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
       cur_tok.type == TokenType::Identifier ||
       cur_tok.type == TokenType::Asm ||
       cur_tok.type == TokenType::LParen ||
-      cur_tok.type == TokenType::Minus) {
+      cur_tok.type == TokenType::Minus ||
+      cur_tok.type == TokenType::Star ||
+      cur_tok.type == TokenType::Ampersand ||
+      cur_tok.type == TokenType::Null) {
     auto expr = parse_expr();
     if (!expr) return nullptr;
     auto stmt = std::make_unique<ReturnStmt>();
@@ -271,12 +288,15 @@ std::unique_ptr<IfStmt> Parser::parse_if_stmt() {
   auto cond = parse_expr();
   if (!cond) return nullptr;
 
+  skip_newlines();
   auto then_branch = parse_block();
   if (has_error) return nullptr;
 
+  skip_newlines();
   std::vector<std::unique_ptr<Stmt>> else_branch;
   if (cur_tok.type == TokenType::Else) {
     next_token(); // consume 'else'
+    skip_newlines();
     else_branch = parse_block();
     if (has_error) return nullptr;
   }
@@ -290,6 +310,7 @@ std::unique_ptr<IfStmt> Parser::parse_if_stmt() {
 
 std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
   next_token(); // consume 'for'
+  skip_newlines();
 
   std::unique_ptr<Stmt> init;
   if (cur_tok.type == TokenType::Let) {
@@ -306,6 +327,7 @@ std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
     return nullptr;
   }
   next_token();
+  skip_newlines();
 
   std::unique_ptr<Expr> cond;
   if (cur_tok.type != TokenType::Comma) {
@@ -318,6 +340,7 @@ std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
     return nullptr;
   }
   next_token();
+  skip_newlines();
 
   std::unique_ptr<Expr> update;
   if (cur_tok.type != TokenType::LBrace) {
@@ -325,6 +348,7 @@ std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
     if (!update) return nullptr;
   }
 
+  skip_newlines();
   auto body = parse_block();
   if (has_error) return nullptr;
 
@@ -349,16 +373,16 @@ std::unique_ptr<Expr> Parser::parse_assignment() {
   if (!left) return nullptr;
 
   if (cur_tok.type == TokenType::Equals) {
-    auto *ident = dynamic_cast<IdentExpr *>(left.get());
-    if (!ident) {
-      set_error("left side of assignment must be a variable name");
+    bool is_ident = dynamic_cast<IdentExpr *>(left.get()) != nullptr;
+    bool is_deref = dynamic_cast<DerefExpr *>(left.get()) != nullptr;
+    if (!is_ident && !is_deref) {
+      set_error("left side of assignment must be a variable or dereference");
       return nullptr;
     }
-    std::string name = ident->name;
     next_token(); // consume '='
     auto value = parse_assignment(); // right-associative
     if (!value) return nullptr;
-    return std::make_unique<AssignExpr>(name, std::move(value));
+    return std::make_unique<AssignExpr>(std::move(left), std::move(value));
   }
   return left;
 }
@@ -426,6 +450,12 @@ std::unique_ptr<Expr> Parser::parse_unary() {
     if (!operand) return nullptr;
     return std::make_unique<UnaryExpr>(std::move(operand));
   }
+  if (cur_tok.type == TokenType::Star) {
+    next_token();
+    auto operand = parse_unary();
+    if (!operand) return nullptr;
+    return std::make_unique<DerefExpr>(std::move(operand));
+  }
   return parse_primary();
 }
 
@@ -439,6 +469,16 @@ std::unique_ptr<Expr> Parser::parse_primary() {
     auto expr = std::make_unique<StringExpr>(cur_tok.text);
     next_token();
     return expr;
+  }
+  if (cur_tok.type == TokenType::Null) {
+    next_token();
+    return std::make_unique<NullExpr>();
+  }
+  if (cur_tok.type == TokenType::Ampersand) {
+    next_token();
+    auto operand = parse_unary();
+    if (!operand) return nullptr;
+    return std::make_unique<AddressOfExpr>(std::move(operand));
   }
   if (cur_tok.type == TokenType::Identifier) {
     std::string name = cur_tok.text;

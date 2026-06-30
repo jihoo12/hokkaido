@@ -1,8 +1,0 @@
-fn main() -> int {
-  for let i: int = 0, i < 100, i = i + 1 {
-    if i == 5 {
-      return 42
-    }
-  }
-  return 0
-}

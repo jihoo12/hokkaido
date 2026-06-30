@@ -64,5 +64,6 @@ private:
 
   // LLVM type helpers
   llvm::Type *get_llvm_type(TypeKind kind);
+  llvm::Type *get_llvm_type(const TypeAnnotation &ann);
 
 };

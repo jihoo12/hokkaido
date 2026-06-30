@@ -18,6 +18,7 @@ class Parser {
   std::string error_msg;
 
   void next_token();
+  void skip_newlines();
   void set_error(const std::string &msg);
 
 public:

@@ -18,6 +18,7 @@ enum class TypeKind {
 
 struct TypeAnnotation {
   TypeKind kind;
+  int pointer_depth = 0;
 };
 
 enum class BinOp {
@@ -67,10 +68,22 @@ struct AsmExpr : Expr {
 };
 
 struct AssignExpr : Expr {
-  std::string name;
+  std::unique_ptr<Expr> target;
   std::unique_ptr<Expr> value;
-  AssignExpr(const std::string &n, std::unique_ptr<Expr> v)
-    : name(n), value(std::move(v)) {}
+  AssignExpr(std::unique_ptr<Expr> t, std::unique_ptr<Expr> v)
+    : target(std::move(t)), value(std::move(v)) {}
+};
+
+struct NullExpr : Expr {};
+
+struct AddressOfExpr : Expr {
+  std::unique_ptr<Expr> operand;
+  AddressOfExpr(std::unique_ptr<Expr> o) : operand(std::move(o)) {}
+};
+
+struct DerefExpr : Expr {
+  std::unique_ptr<Expr> operand;
+  DerefExpr(std::unique_ptr<Expr> o) : operand(std::move(o)) {}
 };
 
 struct Decl {

@@ -15,12 +15,20 @@ string      String (internal)
 void        No return value (functions only)
 ```
 
+Pointer types are written with `*`:
+
+```
+int*        Pointer to int
+int**       Pointer to pointer to int
+```
+
 ## Variables
 
 ```
 let x: int = 42             Integer variable
 let y: float = 3.14         Float variable
 let s: string = "hello"     String variable
+let p: int* = &x            Pointer variable (address of x)
 ```
 
 Variables are mutable; assignment uses `=`.
@@ -85,7 +93,22 @@ for , , { }                // infinite loop
 x = expr        Assign to an existing variable
 ```
 
-Assignment is an expression (returns the assigned value).
+Assignment is an expression (returns the assigned value). Write through a pointer:
+
+```
+*p = 42      Assign 42 through pointer p
+```
+
+## Pointers
+
+```
+&x              Address of variable x
+*p              Dereference pointer p
+null            Null pointer literal
+```
+
+Pointers are typed: `int*` is a pointer to `int`, `float**` is a pointer to pointer to `float`.
+Pointer depth is part of the type and checked at compile time for assignment targets.
 
 ## Comparison operators
 
@@ -105,12 +128,12 @@ Comparison operators have lower precedence than `+` and `-`.
 ```
 +       Addition
 -       Subtraction
-*       Multiplication
+*       Multiplication (binary) / Dereference (unary)
 /       Division
 ```
 
 Standard precedence: `*` `/` bind tighter than `+` `-`.
-Unary `-` and `!` bind tighter than all binary operators.
+Unary `-`, `!`, and `*` bind tighter than all binary operators.
 
 ## Function calls
 

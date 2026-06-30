@@ -9,6 +9,7 @@
 enum class TokenType {
   Eof,
   Let, Fn, Return, Asm, If, Else, For,
+  Null,
   Cubical,
   Int, Float, String, Void,
   Identifier,
@@ -19,7 +20,7 @@ enum class TokenType {
   Semicolon, Comma, Colon,
   Newline,
   LParen, RParen, LBrace, RBrace,
-  Plus, Minus, Star, Slash,
+  Plus, Minus, Star, Slash, Ampersand,
 };
 
 struct Token {

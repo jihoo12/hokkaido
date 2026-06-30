@@ -29,6 +29,13 @@ Type *CodeGen::get_llvm_type(TypeKind kind) {
   return nullptr;
 }
 
+Type *CodeGen::get_llvm_type(const TypeAnnotation &ann) {
+  Type *base = get_llvm_type(ann.kind);
+  for (int i = 0; i < ann.pointer_depth; i++)
+    base = PointerType::getUnqual(Context);
+  return base;
+}
+
 // -------------------------------------------------------------------------
 // Top-level generate
 // -------------------------------------------------------------------------
@@ -41,10 +48,10 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
     if (auto *fn = dynamic_cast<FnDecl *>(decl.get())) {
       std::vector<Type *> param_types;
       for (auto &p : fn->params)
-        param_types.push_back(get_llvm_type(p.type_ann.kind));
+        param_types.push_back(get_llvm_type(p.type_ann));
 
       FunctionType *FT = FunctionType::get(
-          get_llvm_type(fn->return_type.kind), param_types, false);
+          get_llvm_type(fn->return_type), param_types, false);
       // Rename user "main" so it doesn't conflict with the auto-generated entry
       std::string llvm_name = fn->name;
       if (fn->name == "main") {
@@ -134,6 +141,39 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     return Builder.CreateLoad(expected_type, it->second, id->name);
   }
 
+  if (auto *null_expr = dynamic_cast<NullExpr *>(expr)) {
+    return ConstantPointerNull::get(cast<PointerType>(expected_type));
+  }
+
+  if (auto *addr = dynamic_cast<AddressOfExpr *>(expr)) {
+    if (auto *id = dynamic_cast<IdentExpr *>(addr->operand.get())) {
+      auto it = named_values.find(id->name);
+      if (it == named_values.end()) {
+        errs() << "Error: undefined variable '" << id->name << "'\n";
+        return nullptr;
+      }
+      return it->second;
+    }
+    errs() << "Error: address-of requires a variable\n";
+    return nullptr;
+  }
+
+  if (auto *deref = dynamic_cast<DerefExpr *>(expr)) {
+    Value *ptr = nullptr;
+    if (auto *id = dynamic_cast<IdentExpr *>(deref->operand.get())) {
+      auto it = named_values.find(id->name);
+      if (it == named_values.end()) {
+        errs() << "Error: undefined variable '" << id->name << "'\n";
+        return nullptr;
+      }
+      ptr = Builder.CreateLoad(it->second->getAllocatedType(), it->second, id->name);
+    } else {
+      ptr = eval_expr(deref->operand.get(), PointerType::getUnqual(Context));
+    }
+    if (!ptr) return nullptr;
+    return Builder.CreateLoad(expected_type, ptr);
+  }
+
   if (auto *un = dynamic_cast<UnaryExpr *>(expr)) {
     Value *op = eval_expr(un->operand.get(), expected_type);
     if (!op) return nullptr;
@@ -208,15 +248,31 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   }
 
   if (auto *assign = dynamic_cast<AssignExpr *>(expr)) {
-    auto it = named_values.find(assign->name);
-    if (it == named_values.end()) {
-      errs() << "Error: undefined variable '" << assign->name << "'\n";
-      return nullptr;
-    }
-    Type *var_type = it->second->getAllocatedType();
-    Value *val = eval_expr(assign->value.get(), var_type);
+    Value *val = eval_expr(assign->value.get(), expected_type);
     if (!val) return nullptr;
-    Builder.CreateStore(val, it->second);
+
+    if (auto *id = dynamic_cast<IdentExpr *>(assign->target.get())) {
+      auto it = named_values.find(id->name);
+      if (it == named_values.end()) {
+        errs() << "Error: undefined variable '" << id->name << "'\n";
+        return nullptr;
+      }
+      Builder.CreateStore(val, it->second);
+    } else if (auto *deref = dynamic_cast<DerefExpr *>(assign->target.get())) {
+      Value *ptr = nullptr;
+      if (auto *id2 = dynamic_cast<IdentExpr *>(deref->operand.get())) {
+        auto it = named_values.find(id2->name);
+        if (it == named_values.end()) {
+          errs() << "Error: undefined variable '" << id2->name << "'\n";
+          return nullptr;
+        }
+        ptr = Builder.CreateLoad(it->second->getAllocatedType(), it->second, id2->name);
+      } else {
+        ptr = eval_expr(deref->operand.get(), PointerType::getUnqual(Context));
+      }
+      if (!ptr) return nullptr;
+      Builder.CreateStore(val, ptr);
+    }
     return val;
   }
 
@@ -305,9 +361,15 @@ bool CodeGen::alloc_and_store(const std::string &name, TypeKind kind,
 // -------------------------------------------------------------------------
 
 bool CodeGen::gen_let_decl(LetDecl *decl) {
-  Type *llvm_type = get_llvm_type(decl->type_ann.kind);
+  Type *llvm_type = get_llvm_type(decl->type_ann);
   Value *init = nullptr;
   std::string debug;
+
+  if (decl->type_ann.pointer_depth > 0) {
+    init = eval_expr(decl->init_expr.get(), llvm_type);
+    if (!init) return false;
+    return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type);
+  }
 
   switch (decl->type_ann.kind) {
     case TypeKind::Void:
@@ -331,13 +393,15 @@ bool CodeGen::gen_let_decl(LetDecl *decl) {
   return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type);
 }
 
-// -------------------------------------------------------------------------
-// Let statements (inside function bodies)
-// -------------------------------------------------------------------------
-
 bool CodeGen::gen_let_stmt(LetStmt *stmt) {
-  Type *llvm_type = get_llvm_type(stmt->type_ann.kind);
+  Type *llvm_type = get_llvm_type(stmt->type_ann);
   Value *init = nullptr;
+
+  if (stmt->type_ann.pointer_depth > 0) {
+    init = eval_expr(stmt->init_expr.get(), llvm_type);
+    if (!init) return false;
+    return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type);
+  }
 
   switch (stmt->type_ann.kind) {
     case TypeKind::Void:
@@ -353,8 +417,8 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
       init = eval_string_init(stmt->init_expr.get());
       break;
     case TypeKind::Cubical:
-      init = eval_cubical_init(stmt->init_expr.get(), nullptr);
-      break;
+      errs() << "Error: cubical type not supported in let statements\n";
+      return false;
   }
   if (!init) return false;
   return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type);

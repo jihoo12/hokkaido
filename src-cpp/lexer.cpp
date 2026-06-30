@@ -52,6 +52,7 @@ Token Lexer::next_token() {
   if (ch == ',') { advance(); return {TokenType::Comma, ",", 0, l, c}; }
   if (ch == '+') { advance(); return {TokenType::Plus, "+", 0, l, c}; }
   if (ch == ':') { advance(); return {TokenType::Colon, ":", 0, l, c}; }
+  if (ch == '&') { advance(); return {TokenType::Ampersand, "&", 0, l, c}; }
   if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
   if (ch == '/') { advance(); return {TokenType::Slash, "/", 0, l, c}; }
 
@@ -176,6 +177,7 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "if") return {TokenType::If, id, 0, l, c};
   if (id == "else") return {TokenType::Else, id, 0, l, c};
   if (id == "for") return {TokenType::For, id, 0, l, c};
+  if (id == "null") return {TokenType::Null, id, 0, l, c};
   if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
   if (id == "int") return {TokenType::Int, id, 0, l, c};
   if (id == "float") return {TokenType::Float, id, 0, l, c};
