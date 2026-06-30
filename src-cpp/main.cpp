@@ -13,9 +13,6 @@
 //   // Cubical variable declaration (from file)
 //   let cubical result = "path/to/expression.cub"
 //
-//   // Print statement
-//   print x
-//
 // The cubical type triggers compile-time evaluation of the cubical
 // expression. The result is embedded as an LLVM constant.
 
@@ -52,13 +49,6 @@ void print_usage() {
   std::cout << "Usage:\n";
   std::cout << "  my_compiler input.hk          Compile a .hk file\n";
   std::cout << "  my_compiler input.cub          Evaluate a .cub file\n";
-  std::cout << "Hokkaido language syntax:\n";
-  std::cout << "  let int x = 42                 Integer variable\n";
-  std::cout << "  let float y = 3.14             Float variable\n";
-  std::cout << "  let string s = \"hello\"         String variable\n";
-  std::cout << "  let cubical n = \"...\"          Cubical inline expression\n";
-  std::cout << "  let cubical r = \"file.cub\"     Cubical from file\n";
-  std::cout << "  print x                        Print variable at compile time for debug\n";
 }
 
 int main(int argc, char *argv[]) {

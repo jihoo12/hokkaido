@@ -26,7 +26,7 @@ void Lexer::skip_line_comment() {
 Token Lexer::next_token() {
   skip_whitespace();
 
-  if (pos >= input.size()) return {TOK_EOF, "", 0, line, col};
+  if (pos >= input.size()) return {TokenType::Eof, "", 0, line, col};
 
   int l = line, c = col;
   char ch = peek();
@@ -40,19 +40,29 @@ Token Lexer::next_token() {
   // Newlines (statement separators)
   if (ch == '\n') {
     advance();
-    return {TOK_NEWLINE, "\\n", 0, l, c};
+    return {TokenType::Newline, "\\n", 0, l, c};
   }
 
-  // Semicolons
-  if (ch == ';') {
-    advance();
-    return {TOK_SEMICOLON, ";", 0, l, c};
-  }
+  // Single-character tokens
+  if (ch == ';') { advance(); return {TokenType::Semicolon, ";", 0, l, c}; }
+  if (ch == '=') { advance(); return {TokenType::Equals, "=", 0, l, c}; }
+  if (ch == '(') { advance(); return {TokenType::LParen, "(", 0, l, c}; }
+  if (ch == ')') { advance(); return {TokenType::RParen, ")", 0, l, c}; }
+  if (ch == '{') { advance(); return {TokenType::LBrace, "{", 0, l, c}; }
+  if (ch == '}') { advance(); return {TokenType::RBrace, "}", 0, l, c}; }
+  if (ch == ',') { advance(); return {TokenType::Comma, ",", 0, l, c}; }
+  if (ch == '+') { advance(); return {TokenType::Plus, "+", 0, l, c}; }
+  if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
+  if (ch == '/') { advance(); return {TokenType::Slash, "/", 0, l, c}; }
 
-  // Equals
-  if (ch == '=') {
+  // Arrow and minus
+  if (ch == '-') {
+    if (pos + 1 < input.size() && input[pos + 1] == '>') {
+      advance(); advance();
+      return {TokenType::Arrow, "->", 0, l, c};
+    }
     advance();
-    return {TOK_EQUALS, "=", 0, l, c};
+    return {TokenType::Minus, "-", 0, l, c};
   }
 
   // String literals
@@ -60,7 +70,7 @@ Token Lexer::next_token() {
     return lex_string(l, c);
   }
 
-  // Numbers
+  // Numbers (including negative literals)
   if (std::isdigit(ch) || (ch == '-' && pos + 1 < input.size() && std::isdigit(input[pos + 1]))) {
     return lex_number(l, c);
   }
@@ -75,7 +85,7 @@ Token Lexer::next_token() {
   err += ch;
   err += "'";
   advance();
-  return {TOK_EOF, err, 0, l, c};
+  return {TokenType::Eof, err, 0, l, c};
 }
 
 Token Lexer::lex_string(int l, int c) {
@@ -95,10 +105,10 @@ Token Lexer::lex_string(int l, int c) {
     }
   }
   if (pos >= input.size()) {
-    return {TOK_EOF, "unterminated string", 0, l, c};
+    return {TokenType::Eof, "unterminated string", 0, l, c};
   }
   advance(); // skip closing "
-  return {TOK_STRING_LITERAL, val, 0, l, c};
+  return {TokenType::StringLiteral, val, 0, l, c};
 }
 
 Token Lexer::lex_number(int l, int c) {
@@ -116,22 +126,22 @@ Token Lexer::lex_number(int l, int c) {
     }
   }
   double val = std::stod(num);
-  return {TOK_NUMBER, num, val, l, c};
+  return {TokenType::Number, num, val, l, c};
 }
 
 Token Lexer::lex_identifier(int l, int c) {
   std::string id;
-  while (pos < input.size() && (std::isalnum(peek()) || peek() == '_' || peek() == '-')) {
+  while (pos < input.size() && (std::isalnum(peek()) || peek() == '_')) {
     id += advance();
   }
 
-  // Check keywords
-  if (id == "let") return {TOK_LET, id, 0, l, c};
-  if (id == "cubical") return {TOK_CUBICAL, id, 0, l, c};
-  if (id == "print") return {TOK_PRINT, id, 0, l, c};
-  if (id == "int") return {TOK_INT, id, 0, l, c};
-  if (id == "float") return {TOK_FLOAT, id, 0, l, c};
-  if (id == "string") return {TOK_STRING, id, 0, l, c};
+  if (id == "let") return {TokenType::Let, id, 0, l, c};
+  if (id == "fn") return {TokenType::Fn, id, 0, l, c};
+  if (id == "return") return {TokenType::Return, id, 0, l, c};
+  if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
+  if (id == "int") return {TokenType::Int, id, 0, l, c};
+  if (id == "float") return {TokenType::Float, id, 0, l, c};
+  if (id == "string") return {TokenType::String, id, 0, l, c};
 
-  return {TOK_IDENTIFIER, id, 0, l, c};
+  return {TokenType::Identifier, id, 0, l, c};
 }

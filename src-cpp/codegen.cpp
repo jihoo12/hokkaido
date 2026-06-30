@@ -13,170 +13,349 @@
 
 using namespace llvm;
 
-bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
-  // Create main function
-  FunctionType *FT = FunctionType::get(Type::getInt32Ty(Context), false);
-  MainFn = Function::Create(FT, Function::ExternalLinkage, "main", &M);
-  EntryBB = BasicBlock::Create(Context, "entry", MainFn);
-  Builder.SetInsertPoint(EntryBB);
+// -------------------------------------------------------------------------
+// LLVM type mapping
+// -------------------------------------------------------------------------
 
+Type *CodeGen::get_llvm_type(TypeKind kind) {
+  switch (kind) {
+    case TypeKind::Int:     return Type::getInt64Ty(Context);
+    case TypeKind::Float:   return Type::getDoubleTy(Context);
+    case TypeKind::String:  return PointerType::getUnqual(Context);
+    case TypeKind::Cubical: return Type::getInt64Ty(Context);
+  }
+  return nullptr;
+}
+
+// -------------------------------------------------------------------------
+// Top-level generate
+// -------------------------------------------------------------------------
+
+bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
+  // Pass 1: create all function declarations so they can be referenced
+  std::vector<FnDecl *> fn_decls;
   for (auto &decl : decls) {
-    if (auto *let = dynamic_cast<LetDecl *>(decl.get())) {
-      if (!gen_let_decl(let)) return false;
-    } else if (auto *print = dynamic_cast<PrintDecl *>(decl.get())) {
-      gen_print_decl(print);
+    if (auto *fn = dynamic_cast<FnDecl *>(decl.get())) {
+      std::vector<Type *> param_types;
+      for (auto &p : fn->params)
+        param_types.push_back(get_llvm_type(p.type_ann.kind));
+
+      FunctionType *FT = FunctionType::get(
+          get_llvm_type(fn->return_type.kind), param_types, false);
+      Function::Create(FT, Function::ExternalLinkage, fn->name, &M);
+      fn_decls.push_back(fn);
     }
   }
 
-  // Return 0
-  Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+  // Pass 2: generate function bodies
+  for (auto *fn : fn_decls) {
+    if (!gen_fn_body(fn, M.getFunction(fn->name)))
+      return false;
+  }
 
-  // Verify
+  // Pass 3: main function for top-level let decls
+  if (!gen_main_body(decls))
+    return false;
+
   if (verifyModule(M, &errs())) {
     errs() << "Error: module verification failed\n";
     return false;
   }
-
   return true;
 }
+
+bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
+  FunctionType *FT = FunctionType::get(Type::getInt32Ty(Context), false);
+  MainFn = Function::Create(FT, Function::ExternalLinkage, "main", &M);
+  EntryBB = BasicBlock::Create(Context, "entry", MainFn);
+  Builder.SetInsertPoint(EntryBB);
+  named_values.clear();
+  named_types.clear();
+
+  for (auto &decl : decls) {
+    if (auto *let = dynamic_cast<LetDecl *>(decl.get())) {
+      if (!gen_let_decl(let)) return false;
+    }
+  }
+
+  Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+  return true;
+}
+
+// -------------------------------------------------------------------------
+// Expression evaluation
+// -------------------------------------------------------------------------
+
+Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
+  if (auto *num = dynamic_cast<NumberExpr *>(expr)) {
+    if (expected_type->isDoubleTy())
+      return ConstantFP::get(expected_type, num->value);
+    return ConstantInt::get(expected_type, (int64_t)num->value);
+  }
+
+  if (auto *str = dynamic_cast<StringExpr *>(expr)) {
+    return Builder.CreateGlobalString(str->value, "str");
+  }
+
+  if (auto *id = dynamic_cast<IdentExpr *>(expr)) {
+    auto it = named_values.find(id->name);
+    if (it == named_values.end()) {
+      errs() << "Error: undefined variable '" << id->name << "'\n";
+      return nullptr;
+    }
+    return Builder.CreateLoad(expected_type, it->second, id->name);
+  }
+
+  if (auto *un = dynamic_cast<UnaryExpr *>(expr)) {
+    Value *op = eval_expr(un->operand.get(), expected_type);
+    if (!op) return nullptr;
+    if (expected_type->isDoubleTy())
+      return Builder.CreateFNeg(op);
+    return Builder.CreateNeg(op);
+  }
+
+  if (auto *bin = dynamic_cast<BinaryExpr *>(expr)) {
+    Value *l = eval_expr(bin->left.get(), expected_type);
+    Value *r = eval_expr(bin->right.get(), expected_type);
+    if (!l || !r) return nullptr;
+
+    bool is_float = expected_type->isDoubleTy();
+    switch (bin->op) {
+      case BinOp::Add: return is_float ? Builder.CreateFAdd(l, r) : Builder.CreateAdd(l, r);
+      case BinOp::Sub: return is_float ? Builder.CreateFSub(l, r) : Builder.CreateSub(l, r);
+      case BinOp::Mul: return is_float ? Builder.CreateFMul(l, r) : Builder.CreateMul(l, r);
+      case BinOp::Div: return is_float ? Builder.CreateFDiv(l, r) : Builder.CreateSDiv(l, r);
+    }
+  }
+
+  if (auto *call = dynamic_cast<CallExpr *>(expr)) {
+    Function *callee = M.getFunction(call->callee);
+    if (!callee) {
+      errs() << "Error: undefined function '" << call->callee << "'\n";
+      return nullptr;
+    }
+    if (callee->arg_size() != call->args.size()) {
+      errs() << "Error: wrong number of arguments to '" << call->callee << "'\n";
+      return nullptr;
+    }
+    std::vector<Value *> args;
+    for (size_t i = 0; i < call->args.size(); i++) {
+      Type *param_type = callee->getArg(i)->getType();
+      Value *arg = eval_expr(call->args[i].get(), param_type);
+      if (!arg) return nullptr;
+      args.push_back(arg);
+    }
+    return Builder.CreateCall(callee, args);
+  }
+
+  errs() << "Error: unknown expression type\n";
+  return nullptr;
+}
+
+// -------------------------------------------------------------------------
+// Per-type value generators
+// -------------------------------------------------------------------------
+
+Value *CodeGen::eval_int_init(Expr *expr) {
+  if (auto *id = dynamic_cast<IdentExpr *>(expr)) {
+    auto it = named_values.find(id->name);
+    if (it == named_values.end()) {
+      errs() << "Error: undefined variable '" << id->name << "'\n";
+      return nullptr;
+    }
+    return Builder.CreateLoad(Type::getInt64Ty(Context), it->second, id->name);
+  }
+  return eval_expr(expr, Type::getInt64Ty(Context));
+}
+
+Value *CodeGen::eval_float_init(Expr *expr) {
+  return eval_expr(expr, Type::getDoubleTy(Context));
+}
+
+Value *CodeGen::eval_string_init(Expr *expr) {
+  return eval_expr(expr, PointerType::getUnqual(Context));
+}
+
+Value *CodeGen::eval_cubical_init(Expr *expr, std::string *debug_out) {
+  auto *str = dynamic_cast<StringExpr *>(expr);
+  if (!str) {
+    errs() << "Error: cubical variable requires a string (inline source or file path)\n";
+    return nullptr;
+  }
+
+  std::string cubical_source = str->value;
+
+  if (cubical_source.size() >= 4 &&
+      (cubical_source.substr(cubical_source.size() - 4) == ".cub" ||
+       cubical_source.substr(cubical_source.size() - 5) == ".uwuc")) {
+    std::ifstream ifs(cubical_source);
+    if (!ifs) {
+      errs() << "Error: cannot open cubical file '" << cubical_source << "'\n";
+      return nullptr;
+    }
+    cubical_source.assign((std::istreambuf_iterator<char>(ifs)),
+                           std::istreambuf_iterator<char>());
+  }
+
+  cubical_value cv(cubical_source);
+  if (!cv.valid()) {
+    errs() << "Error: cubical evaluation failed\n";
+    return nullptr;
+  }
+
+  int64_t int_val = cv.as_int();
+  if (int_val >= 0) {
+    if (debug_out)
+      *debug_out = std::to_string(int_val) + "  (from cubical: " + cv.str() + ")";
+    return ConstantInt::get(Type::getInt64Ty(Context), int_val);
+  }
+
+  if (debug_out)
+    *debug_out = "\"" + cv.str() + "\"";
+  return Builder.CreateGlobalString(cv.str(), "cubical_result");
+}
+
+// -------------------------------------------------------------------------
+// Alloca + store helper
+// -------------------------------------------------------------------------
+
+bool CodeGen::alloc_and_store(const std::string &name, TypeKind kind,
+                               Value *init, Type *llvm_type) {
+  AllocaInst *alloca = Builder.CreateAlloca(llvm_type, nullptr, name);
+  Builder.CreateStore(init, alloca);
+  named_values[name] = alloca;
+  named_types[name] = kind;
+  return true;
+}
+
+// -------------------------------------------------------------------------
+// Let declarations (top-level)
+// -------------------------------------------------------------------------
 
 bool CodeGen::gen_let_decl(LetDecl *decl) {
-  Type *llvm_type = nullptr;
-  Constant *init_val = nullptr;
+  Type *llvm_type = get_llvm_type(decl->type_ann.kind);
+  Value *init = nullptr;
+  std::string debug;
 
   switch (decl->type_ann.kind) {
-    case TYPE_INT: {
-      llvm_type = Type::getInt64Ty(Context);
-      double val = 0;
-      if (auto *num = dynamic_cast<NumberExpr *>(decl->init_expr.get())) {
-        val = num->value;
-      } else if (auto *id = dynamic_cast<IdentExpr *>(decl->init_expr.get())) {
-        // Reference to another variable
-        auto it = named_values.find(id->name);
-        if (it == named_values.end()) {
-          errs() << "Error: undefined variable '" << id->name << "'\n";
-          return false;
-        }
-        // Load from the existing alloca
-        Value *loaded = Builder.CreateLoad(Type::getInt64Ty(Context), it->second, id->name);
-        AllocaInst *alloca = Builder.CreateAlloca(Type::getInt64Ty(Context), nullptr, decl->name);
-        Builder.CreateStore(loaded, alloca);
-        named_values[decl->name] = alloca;
-        named_types[decl->name] = TYPE_INT;
-        return true;
-      } else {
-        errs() << "Error: int variable requires a number\n";
-        return false;
-      }
-      init_val = ConstantInt::get(Type::getInt64Ty(Context), (int64_t)val);
+    case TypeKind::Int:
+      init = eval_int_init(decl->init_expr.get());
       break;
-    }
-    case TYPE_FLOAT: {
-      llvm_type = Type::getDoubleTy(Context);
-      double val = 0;
-      if (auto *num = dynamic_cast<NumberExpr *>(decl->init_expr.get())) {
-        val = num->value;
-      } else {
-        errs() << "Error: float variable requires a number\n";
-        return false;
-      }
-      init_val = ConstantFP::get(Type::getDoubleTy(Context), val);
+    case TypeKind::Float:
+      init = eval_float_init(decl->init_expr.get());
       break;
-    }
-    case TYPE_STRING: {
-      llvm_type = PointerType::getUnqual(Context);
-      if (auto *str = dynamic_cast<StringExpr *>(decl->init_expr.get())) {
-        init_val = Builder.CreateGlobalString(str->value, decl->name);
-      } else {
-        errs() << "Error: string variable requires a string literal\n";
-        return false;
-      }
+    case TypeKind::String:
+      init = eval_string_init(decl->init_expr.get());
       break;
-    }
-    case TYPE_CUBICAL: {
-      // Cubical type: evaluate the cubical expression at compile time
-      std::string cubical_source;
-
-      if (auto *str = dynamic_cast<StringExpr *>(decl->init_expr.get())) {
-        cubical_source = str->value;
-
-        // Check if the string is a file path (ends with .cub or .uwuc)
-        if (cubical_source.size() >= 4 &&
-            (cubical_source.substr(cubical_source.size() - 4) == ".cub" ||
-             cubical_source.substr(cubical_source.size() - 5) == ".uwuc")) {
-          // It's a file path — read the file
-          std::ifstream ifs(cubical_source);
-          if (!ifs) {
-            errs() << "Error: cannot open cubical file '" << cubical_source << "'\n";
-            return false;
-          }
-          cubical_source.assign((std::istreambuf_iterator<char>(ifs)),
-                                 std::istreambuf_iterator<char>());
-        }
-        // Otherwise it's inline cubical source
-      } else {
-        errs() << "Error: cubical variable requires a string (inline source or file path)\n";
-        return false;
-      }
-
-      // Evaluate the cubical expression
-      cubical_value cv(cubical_source);
-      if (!cv.valid()) {
-        errs() << "Error: cubical evaluation failed for '" << decl->name << "'\n";
-        return false;
-      }
-
-      // Try to extract an integer value (for Nat results)
-      int64_t int_val = cv.as_int();
-      if (int_val >= 0) {
-        // Store as i64
-        llvm_type = Type::getInt64Ty(Context);
-        init_val = ConstantInt::get(Type::getInt64Ty(Context), int_val);
-        std::cout << "  " << decl->name << " = " << int_val
-                  << "  (from cubical: " << cv.str() << ")\n";
-      } else {
-        // Store the result string as a global string pointer
-        llvm_type = PointerType::getUnqual(Context);
-        init_val = Builder.CreateGlobalString(cv.str(), decl->name);
-        std::cout << "  " << decl->name << " = \"" << cv.str() << "\"\n";
-      }
+    case TypeKind::Cubical:
+      init = eval_cubical_init(decl->init_expr.get(), &debug);
+      if (init) std::cout << "  " << decl->name << " = " << debug << "\n";
       break;
+  }
+  if (!init) return false;
+  return alloc_and_store(decl->name, decl->type_ann.kind, init, llvm_type);
+}
+
+// -------------------------------------------------------------------------
+// Let statements (inside function bodies)
+// -------------------------------------------------------------------------
+
+bool CodeGen::gen_let_stmt(LetStmt *stmt) {
+  Type *llvm_type = get_llvm_type(stmt->type_ann.kind);
+  Value *init = nullptr;
+
+  switch (stmt->type_ann.kind) {
+    case TypeKind::Int:
+      init = eval_int_init(stmt->init_expr.get());
+      break;
+    case TypeKind::Float:
+      init = eval_float_init(stmt->init_expr.get());
+      break;
+    case TypeKind::String:
+      init = eval_string_init(stmt->init_expr.get());
+      break;
+    case TypeKind::Cubical:
+      init = eval_cubical_init(stmt->init_expr.get(), nullptr);
+      break;
+  }
+  if (!init) return false;
+  return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type);
+}
+
+// -------------------------------------------------------------------------
+// Functions
+// -------------------------------------------------------------------------
+
+bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
+  BasicBlock *BB = BasicBlock::Create(Context, "entry", fn);
+  Builder.SetInsertPoint(BB);
+
+  // Save outer scope
+  auto saved_values = std::move(named_values);
+  auto saved_types = std::move(named_types);
+  named_values.clear();
+  named_types.clear();
+
+  // Allocate and store parameters
+  size_t i = 0;
+  for (auto &arg : fn->args()) {
+    arg.setName(decl->params[i].name);
+    AllocaInst *alloca = Builder.CreateAlloca(arg.getType(), nullptr, arg.getName());
+    Builder.CreateStore(&arg, alloca);
+    named_values[std::string(arg.getName())] = alloca;
+    named_types[std::string(arg.getName())] = decl->params[i].type_ann.kind;
+    i++;
+  }
+
+  // Generate body
+  for (auto &stmt : decl->body) {
+    if (!gen_stmt(stmt.get())) {
+      named_values = std::move(saved_values);
+      named_types = std::move(saved_types);
+      return false;
     }
   }
 
-  // Create alloca and store initial value
-  AllocaInst *alloca = Builder.CreateAlloca(llvm_type, nullptr, decl->name);
-  if (init_val) {
-    Builder.CreateStore(init_val, alloca);
+  // If function doesn't return, add a default return
+  Type *ret_type = fn->getReturnType();
+  if (!BB->getTerminator()) {
+    if (ret_type->isIntegerTy(64))
+      Builder.CreateRet(ConstantInt::get(ret_type, 0));
+    else if (ret_type->isDoubleTy())
+      Builder.CreateRet(ConstantFP::get(ret_type, 0.0));
+    else
+      Builder.CreateRet(ConstantPointerNull::get(cast<PointerType>(ret_type)));
   }
-  named_values[decl->name] = alloca;
-  named_types[decl->name] = decl->type_ann.kind;
 
+  // Restore scope
+  named_values = std::move(saved_values);
+  named_types = std::move(saved_types);
   return true;
 }
 
-void CodeGen::gen_print_decl(PrintDecl *decl) {
-  auto it = named_values.find(decl->name);
-  if (it == named_values.end()) {
-    errs() << "Warning: print of undefined variable '" << decl->name << "'\n";
-    return;
+// -------------------------------------------------------------------------
+// Statements
+// -------------------------------------------------------------------------
+
+bool CodeGen::gen_stmt(Stmt *stmt) {
+  if (auto *let = dynamic_cast<LetStmt *>(stmt))
+    return gen_let_stmt(let);
+  if (auto *ret = dynamic_cast<ReturnStmt *>(stmt))
+    return gen_return_stmt(ret);
+  if (auto *expr = dynamic_cast<ExprStmt *>(stmt)) {
+    // Evaluate for side effects (e.g. function calls)
+    Value *v = eval_expr(expr->expr.get(), Type::getInt64Ty(Context));
+    return v != nullptr;
   }
+  errs() << "Error: unknown statement type\n";
+  return false;
+}
 
-  auto type_it = named_types.find(decl->name);
-  TypeKind kind = (type_it != named_types.end()) ? type_it->second : TYPE_INT;
-
-  // For now, just generate a no-op (LLVM doesn't have a simple print intrinsic)
-  // In a real compiler, you'd call printf or similar
-  Value *loaded = Builder.CreateLoad(it->second->getAllocatedType(), it->second, decl->name);
-
-  // Print the value at compile time (since we're a compiler)
-  if (auto *ci = dyn_cast<ConstantInt>(loaded)) {
-    std::cout << "  " << decl->name << " = " << ci->getSExtValue() << "\n";
-  } else if (auto *cf = dyn_cast<ConstantFP>(loaded)) {
-    std::cout << "  " << decl->name << " = " << cf->getValueAPF().convertToDouble() << "\n";
-  } else if (auto *ce = dyn_cast<ConstantExpr>(loaded)) {
-    std::cout << "  " << decl->name << " = (constant expression)\n";
-  } else {
-    std::cout << "  " << decl->name << " = (runtime value)\n";
-  }
+bool CodeGen::gen_return_stmt(ReturnStmt *stmt) {
+  Function *fn = Builder.GetInsertBlock()->getParent();
+  Type *ret_type = fn->getReturnType();
+  Value *val = eval_expr(stmt->value.get(), ret_type);
+  if (!val) return false;
+  Builder.CreateRet(val);
+  return true;
 }
