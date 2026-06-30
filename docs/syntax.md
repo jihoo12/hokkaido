@@ -146,3 +146,11 @@ let z: int = add(1, 2)          Function call
 ```
 asm("nop")                      Inline assembly (void expression)
 ```
+
+## cubical
+
+```
+let n: cubical = "cubicalsource.cub"
+```
+
+typecheking and evaluation at compile time

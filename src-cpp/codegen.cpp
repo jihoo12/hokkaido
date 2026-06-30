@@ -417,8 +417,8 @@ bool CodeGen::gen_let_stmt(LetStmt *stmt) {
       init = eval_string_init(stmt->init_expr.get());
       break;
     case TypeKind::Cubical:
-      errs() << "Error: cubical type not supported in let statements\n";
-      return false;
+      init = eval_cubical_init(stmt->init_expr.get(), nullptr);
+      break;
   }
   if (!init) return false;
   return alloc_and_store(stmt->name, stmt->type_ann.kind, init, llvm_type);
