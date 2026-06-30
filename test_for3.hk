@@ -1,0 +1,9 @@
+fn main() -> int {
+  let total: int = 0
+  for let i: int = 0, i < 3, i = i + 1 {
+    for let j: int = 0, j < 3, j = j + 1 {
+      total = total + 1
+    }
+  }
+  return total
+}

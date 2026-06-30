@@ -23,6 +23,8 @@ let y: float = 3.14         Float variable
 let s: string = "hello"     String variable
 ```
 
+Variables are mutable; assignment uses `=`.
+
 ## Functions
 
 ```
@@ -61,6 +63,29 @@ if condition {
   // else branch
 }
 ```
+
+## For loop
+
+```
+for let i: int = 0, i < 10, i = i + 1 {
+  // body
+}
+```
+
+Three comma-separated parts: init, condition, update. Any part can be omitted:
+
+```
+for , condition, { }       // while-like
+for , , { }                // infinite loop
+```
+
+## Assignment
+
+```
+x = expr        Assign to an existing variable
+```
+
+Assignment is an expression (returns the assigned value).
 
 ## Comparison operators
 

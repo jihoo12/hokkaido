@@ -8,7 +8,7 @@
 
 enum class TokenType {
   Eof,
-  Let, Fn, Return, Asm, If, Else,
+  Let, Fn, Return, Asm, If, Else, For,
   Cubical,
   Int, Float, String, Void,
   Identifier,

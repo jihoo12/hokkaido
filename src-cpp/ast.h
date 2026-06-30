@@ -66,6 +66,13 @@ struct AsmExpr : Expr {
   std::string asm_code;
 };
 
+struct AssignExpr : Expr {
+  std::string name;
+  std::unique_ptr<Expr> value;
+  AssignExpr(const std::string &n, std::unique_ptr<Expr> v)
+    : name(n), value(std::move(v)) {}
+};
+
 struct Decl {
   virtual ~Decl() = default;
 };
@@ -104,6 +111,13 @@ struct IfStmt : Stmt {
   std::unique_ptr<Expr> condition;
   std::vector<std::unique_ptr<Stmt>> then_branch;
   std::vector<std::unique_ptr<Stmt>> else_branch;
+};
+
+struct ForStmt : Stmt {
+  std::unique_ptr<Stmt> init;
+  std::unique_ptr<Expr> condition;
+  std::unique_ptr<Expr> update;
+  std::vector<std::unique_ptr<Stmt>> body;
 };
 
 struct FnDecl : Decl {

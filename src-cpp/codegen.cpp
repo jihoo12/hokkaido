@@ -207,6 +207,19 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     return ConstantInt::get(Type::getInt64Ty(Context), 0);
   }
 
+  if (auto *assign = dynamic_cast<AssignExpr *>(expr)) {
+    auto it = named_values.find(assign->name);
+    if (it == named_values.end()) {
+      errs() << "Error: undefined variable '" << assign->name << "'\n";
+      return nullptr;
+    }
+    Type *var_type = it->second->getAllocatedType();
+    Value *val = eval_expr(assign->value.get(), var_type);
+    if (!val) return nullptr;
+    Builder.CreateStore(val, it->second);
+    return val;
+  }
+
   errs() << "Error: unknown expression type\n";
   return nullptr;
 }
@@ -411,6 +424,8 @@ bool CodeGen::gen_stmt(Stmt *stmt) {
     return gen_return_stmt(ret);
   if (auto *if_ = dynamic_cast<IfStmt *>(stmt))
     return gen_if_stmt(if_);
+  if (auto *for_ = dynamic_cast<ForStmt *>(stmt))
+    return gen_for_stmt(for_);
   if (auto *expr = dynamic_cast<ExprStmt *>(stmt)) {
     Value *v = eval_expr(expr->expr.get(), Type::getInt64Ty(Context));
     return v != nullptr;
@@ -467,5 +482,48 @@ bool CodeGen::gen_if_stmt(IfStmt *stmt) {
     Builder.CreateBr(merge_bb);
 
   Builder.SetInsertPoint(merge_bb);
+  return true;
+}
+
+bool CodeGen::gen_for_stmt(ForStmt *stmt) {
+  Function *fn = Builder.GetInsertBlock()->getParent();
+
+  if (stmt->init) {
+    if (!gen_stmt(stmt->init.get())) return false;
+  }
+
+  BasicBlock *cond_bb = BasicBlock::Create(Context, "for.cond", fn);
+  BasicBlock *body_bb = BasicBlock::Create(Context, "for.body", fn);
+  BasicBlock *update_bb = BasicBlock::Create(Context, "for.update", fn);
+  BasicBlock *end_bb = BasicBlock::Create(Context, "for.end", fn);
+
+  Builder.CreateBr(cond_bb);
+
+  Builder.SetInsertPoint(cond_bb);
+  if (stmt->condition) {
+    Value *cond = eval_expr(stmt->condition.get(), Type::getInt64Ty(Context));
+    if (!cond) return false;
+    cond = Builder.CreateICmpNE(cond, ConstantInt::get(Type::getInt64Ty(Context), 0));
+    Builder.CreateCondBr(cond, body_bb, end_bb);
+  } else {
+    Builder.CreateBr(body_bb);
+  }
+
+  Builder.SetInsertPoint(body_bb);
+  for (auto &s : stmt->body) {
+    if (!gen_stmt(s.get())) return false;
+  }
+  if (!Builder.GetInsertBlock()->getTerminator())
+    Builder.CreateBr(update_bb);
+
+  Builder.SetInsertPoint(update_bb);
+  if (stmt->update) {
+    Value *v = eval_expr(stmt->update.get(), Type::getInt64Ty(Context));
+    if (!v) return false;
+  }
+  if (!Builder.GetInsertBlock()->getTerminator())
+    Builder.CreateBr(cond_bb);
+
+  Builder.SetInsertPoint(end_bb);
   return true;
 }

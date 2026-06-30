@@ -175,6 +175,7 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "asm") return {TokenType::Asm, id, 0, l, c};
   if (id == "if") return {TokenType::If, id, 0, l, c};
   if (id == "else") return {TokenType::Else, id, 0, l, c};
+  if (id == "for") return {TokenType::For, id, 0, l, c};
   if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
   if (id == "int") return {TokenType::Int, id, 0, l, c};
   if (id == "float") return {TokenType::Float, id, 0, l, c};

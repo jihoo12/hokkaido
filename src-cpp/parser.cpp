@@ -223,6 +223,9 @@ std::unique_ptr<Stmt> Parser::parse_stmt() {
   if (cur_tok.type == TokenType::If) {
     return parse_if_stmt();
   }
+  if (cur_tok.type == TokenType::For) {
+    return parse_for_stmt();
+  }
   auto expr = parse_expr();
   if (!expr) return nullptr;
   return std::make_unique<ExprStmt>(std::move(expr));
@@ -285,12 +288,79 @@ std::unique_ptr<IfStmt> Parser::parse_if_stmt() {
   return stmt;
 }
 
+std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
+  next_token(); // consume 'for'
+
+  std::unique_ptr<Stmt> init;
+  if (cur_tok.type == TokenType::Let) {
+    init = parse_let_stmt();
+    if (!init) return nullptr;
+  } else if (cur_tok.type != TokenType::Comma) {
+    auto expr = parse_expr();
+    if (!expr) return nullptr;
+    init = std::make_unique<ExprStmt>(std::move(expr));
+  }
+
+  if (cur_tok.type != TokenType::Comma) {
+    set_error("expected ',' after for init");
+    return nullptr;
+  }
+  next_token();
+
+  std::unique_ptr<Expr> cond;
+  if (cur_tok.type != TokenType::Comma) {
+    cond = parse_expr();
+    if (!cond) return nullptr;
+  }
+
+  if (cur_tok.type != TokenType::Comma) {
+    set_error("expected ',' after for condition");
+    return nullptr;
+  }
+  next_token();
+
+  std::unique_ptr<Expr> update;
+  if (cur_tok.type != TokenType::LBrace) {
+    update = parse_expr();
+    if (!update) return nullptr;
+  }
+
+  auto body = parse_block();
+  if (has_error) return nullptr;
+
+  auto stmt = std::make_unique<ForStmt>();
+  stmt->init = std::move(init);
+  stmt->condition = std::move(cond);
+  stmt->update = std::move(update);
+  stmt->body = std::move(body);
+  return stmt;
+}
+
 // -------------------------------------------------------------------------
 // Expressions (recursive descent, operator precedence)
 // -------------------------------------------------------------------------
 
 std::unique_ptr<Expr> Parser::parse_expr() {
-  return parse_comparison();
+  return parse_assignment();
+}
+
+std::unique_ptr<Expr> Parser::parse_assignment() {
+  auto left = parse_comparison();
+  if (!left) return nullptr;
+
+  if (cur_tok.type == TokenType::Equals) {
+    auto *ident = dynamic_cast<IdentExpr *>(left.get());
+    if (!ident) {
+      set_error("left side of assignment must be a variable name");
+      return nullptr;
+    }
+    std::string name = ident->name;
+    next_token(); // consume '='
+    auto value = parse_assignment(); // right-associative
+    if (!value) return nullptr;
+    return std::make_unique<AssignExpr>(name, std::move(value));
+  }
+  return left;
 }
 
 std::unique_ptr<Expr> Parser::parse_comparison() {
