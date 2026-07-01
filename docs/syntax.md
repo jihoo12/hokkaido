@@ -234,8 +234,7 @@ p = p - 1                // subtract from pointer
 ```
 
 Comparison operators have lower precedence than `<<` and `>>`, which in turn bind lower
-than `+` and `-` — the same precedence hierarchy as C. They produce an `int` (`1` for
-true, `0` for false) rather than a distinct boolean value.
+than `+` and `-` — the same precedence hierarchy as C. They return `bool` (`true` / `false`).
 
 ## Logical operators
 
@@ -244,8 +243,8 @@ true, `0` for false) rather than a distinct boolean value.
 ||      Logical OR
 ```
 
-`&&` and `||` operate on the same "nonzero is true" rule as `if` conditions, and produce an `int`
-(`1` or `0`) like the comparison operators.
+`&&` and `||` short-circuit and return `bool` (`true` / `false`). Each operand is
+treated as truthy when non-zero (the same "nonzero is true" rule as `if` conditions).
 
 ## Arithmetic operators
 

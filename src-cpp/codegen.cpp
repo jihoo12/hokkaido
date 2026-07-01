@@ -164,7 +164,15 @@ TypeAnnotation CodeGen::resolve_expr_type(Expr *expr) {
     TypeAnnotation r = resolve_expr_type(bin->right.get());
     if (l.pointer_depth > 0) return l;
     if (r.pointer_depth > 0) return r;
-    return {TypeKind::Int64};
+    // Comparison and logical operators return bool
+    switch (bin->op) {
+      case BinOp::Eq: case BinOp::Ne:
+      case BinOp::Less: case BinOp::Greater: case BinOp::Le: case BinOp::Ge:
+      case BinOp::And: case BinOp::Or:
+        return {TypeKind::Bool};
+      default:
+        return {TypeKind::Int64};
+    }
   }
   if (dynamic_cast<NumberExpr *>(expr))
     return {TypeKind::Int64};
@@ -491,9 +499,10 @@ bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
 
 Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   if (auto *num = dynamic_cast<NumberExpr *>(expr)) {
-    if (expected_type->isFPOrFPVectorTy())
+    if (expected_type && expected_type->isFPOrFPVectorTy())
       return ConstantFP::get(expected_type, num->value);
-    return ConstantInt::get(expected_type, (int64_t)num->value);
+    Type *t = expected_type ? expected_type : Type::getInt64Ty(Context);
+    return ConstantInt::get(t, (int64_t)num->value);
   }
 
   if (auto *str = dynamic_cast<StringExpr *>(expr)) {
@@ -510,7 +519,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     // variable is an array, return a pointer to its first element.
     Type *alloc_type = it->second->getAllocatedType();
     if (auto *arr_type = dyn_cast<ArrayType>(alloc_type)) {
-      if (expected_type->isPointerTy()) {
+      if (expected_type && expected_type->isPointerTy()) {
         Value *indices[] = {
           ConstantInt::get(Type::getInt64Ty(Context), 0),
           ConstantInt::get(Type::getInt64Ty(Context), 0)
@@ -518,7 +527,9 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
         return Builder.CreateGEP(arr_type, it->second, indices, id->name);
       }
     }
-    return Builder.CreateLoad(expected_type, it->second, id->name);
+    if (expected_type)
+      return Builder.CreateLoad(expected_type, it->second, id->name);
+    return Builder.CreateLoad(alloc_type, it->second, id->name);
   }
 
   if (auto *null_expr = dynamic_cast<NullExpr *>(expr)) {
@@ -778,7 +789,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   if (auto *un = dynamic_cast<UnaryExpr *>(expr)) {
     Value *op = eval_expr(un->operand.get(), expected_type);
     if (!op) return nullptr;
-    if (expected_type->isFPOrFPVectorTy())
+    if (expected_type && expected_type->isFPOrFPVectorTy())
       return Builder.CreateFNeg(op);
     return Builder.CreateNeg(op);
   }
@@ -788,7 +799,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     Value *r = eval_expr(bin->right.get(), expected_type);
     if (!l || !r) return nullptr;
 
-    bool is_float = expected_type->isFPOrFPVectorTy();
+    bool is_float = expected_type && expected_type->isFPOrFPVectorTy();
 
     // Pointer arithmetic: ptr + n, ptr - n, n + ptr
     if ((bin->op == BinOp::Add || bin->op == BinOp::Sub) &&
@@ -827,27 +838,39 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       case BinOp::Div: return is_float ? Builder.CreateFDiv(l, r) : Builder.CreateSDiv(l, r);
       case BinOp::Eq: {
         Value *cmp = Builder.CreateICmpEQ(l, r);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(cmp, expected_type);
+        return cmp;
       }
       case BinOp::Ne: {
         Value *cmp = Builder.CreateICmpNE(l, r);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(cmp, expected_type);
+        return cmp;
       }
       case BinOp::Less: {
         Value *cmp = Builder.CreateICmpSLT(l, r);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(cmp, expected_type);
+        return cmp;
       }
       case BinOp::Greater: {
         Value *cmp = Builder.CreateICmpSGT(l, r);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(cmp, expected_type);
+        return cmp;
       }
       case BinOp::Le: {
         Value *cmp = Builder.CreateICmpSLE(l, r);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(cmp, expected_type);
+        return cmp;
       }
       case BinOp::Ge: {
         Value *cmp = Builder.CreateICmpSGE(l, r);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(cmp, expected_type);
+        return cmp;
       }
       case BinOp::And: {
         // Short-circuit: if l is 0 (falsy), skip evaluating r and return 0.
@@ -856,10 +879,10 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
         BasicBlock *rhs_bb = BasicBlock::Create(Context, "and.rhs", fn);
         BasicBlock *merge_bb = BasicBlock::Create(Context, "and.merge", fn);
 
-        // Store the default result (0 for the false branch) before branching.
+        // Store the default result (false for the false branch) before branching.
         // The rhs_bb will overwrite this if l is truthy.
-        AllocaInst *result_alloca = Builder.CreateAlloca(Type::getInt64Ty(Context), nullptr, "and.result");
-        Builder.CreateStore(ConstantInt::get(Type::getInt64Ty(Context), 0), result_alloca);
+        AllocaInst *result_alloca = Builder.CreateAlloca(Type::getInt1Ty(Context), nullptr, "and.result");
+        Builder.CreateStore(ConstantInt::getFalse(Context), result_alloca);
 
         Value *l_bool = Builder.CreateICmpNE(l, ConstantInt::get(l->getType(), 0));
         Builder.CreateCondBr(l_bool, rhs_bb, merge_bb);
@@ -869,19 +892,23 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
         Value *r_val = eval_expr(bin->right.get(), expected_type);
         if (!r_val) return nullptr;
         Value *r_bool = Builder.CreateICmpNE(r_val, ConstantInt::get(r_val->getType(), 0));
-        Value *r_ext = Builder.CreateZExt(r_bool, Type::getInt64Ty(Context));
-        Builder.CreateStore(r_ext, result_alloca);
+        Builder.CreateStore(r_bool, result_alloca);
         Builder.CreateBr(merge_bb);
 
-        // Merge block: load the result (either 0 from the false path or r_ext from rhs_bb)
+        // Merge block: load the result (either 0 from the false path or r_bool from rhs_bb)
         Builder.SetInsertPoint(merge_bb);
-        return Builder.CreateLoad(Type::getInt64Ty(Context), result_alloca);
+        Value *result = Builder.CreateLoad(Type::getInt1Ty(Context), result_alloca);
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(result, expected_type);
+        return result;
       }
       case BinOp::Or: {
         Value *lb = Builder.CreateICmpNE(l, ConstantInt::get(l->getType(), 0));
         Value *rb = Builder.CreateICmpNE(r, ConstantInt::get(r->getType(), 0));
         Value *cmp = Builder.CreateOr(lb, rb);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        if (expected_type && !expected_type->isIntegerTy(1))
+          return Builder.CreateZExt(cmp, expected_type);
+        return cmp;
       }
       case BinOp::Shr:
         return Builder.CreateAShr(l, r);
@@ -1372,9 +1399,10 @@ bool CodeGen::gen_return_stmt(ReturnStmt *stmt) {
 bool CodeGen::gen_if_stmt(IfStmt *stmt) {
   Function *fn = Builder.GetInsertBlock()->getParent();
 
-  Value *cond = eval_expr(stmt->condition.get(), Type::getInt64Ty(Context));
+  Value *cond = eval_expr(stmt->condition.get(), nullptr);
   if (!cond) return false;
-  cond = Builder.CreateICmpNE(cond, ConstantInt::get(Type::getInt64Ty(Context), 0));
+  if (!cond->getType()->isIntegerTy(1))
+    cond = Builder.CreateICmpNE(cond, ConstantInt::get(cond->getType(), 0));
 
   BasicBlock *then_bb = BasicBlock::Create(Context, "if.then", fn);
   BasicBlock *else_bb = BasicBlock::Create(Context, "if.else", fn);
@@ -1416,9 +1444,10 @@ bool CodeGen::gen_for_stmt(ForStmt *stmt) {
 
   Builder.SetInsertPoint(cond_bb);
   if (stmt->condition) {
-    Value *cond = eval_expr(stmt->condition.get(), Type::getInt64Ty(Context));
+    Value *cond = eval_expr(stmt->condition.get(), nullptr);
     if (!cond) return false;
-    cond = Builder.CreateICmpNE(cond, ConstantInt::get(Type::getInt64Ty(Context), 0));
+    if (!cond->getType()->isIntegerTy(1))
+      cond = Builder.CreateICmpNE(cond, ConstantInt::get(cond->getType(), 0));
     Builder.CreateCondBr(cond, body_bb, end_bb);
   } else {
     Builder.CreateBr(body_bb);
