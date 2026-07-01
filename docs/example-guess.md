@@ -47,7 +47,7 @@ fn main() -> int {
 
 ```
 $ hokkaido guess.hk
-$ cc guess.o -o guess
+$ clang guess.o -o guess
 $ ./guess
 Guess the number (1-100)!
 Enter guess: 50

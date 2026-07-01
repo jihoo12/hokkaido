@@ -30,21 +30,6 @@ according to the platform calling convention.
 extern fn printf(fmt: string, ...) -> int32
 ```
 
-### Calling extern functions
-
-Extern functions are called like regular functions:
-
-```
-fn main() -> int {
-    printf::<string>("hello\n")    // prints "hello"
-    return 0
-}
-```
-
-(Note: generic C functions are not supported — the turbofish `::<string>` here is
-for example only; actual `printf` usage requires matching the format string to
-argument types manually.)
-
 ### String / char* handling
 
 Hokkaido's `string` type maps to a C `char*` when passed to an extern function.
@@ -56,7 +41,7 @@ All object files are linked with `cc` (the system C compiler) by default. To lin
 against a specific library, add `-l<libname>` to the linker flags:
 
 ```
-// Compile: hokkaido file.hk && cc file.o -lm -o file
+// Compile: hokkaido file.hk && clang file.o -lm -o file
 ```
 
 ### Calling convention
