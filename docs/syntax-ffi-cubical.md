@@ -138,9 +138,10 @@ move, or optimize the asm block.
 ## Cubical
 
 Cubical is a compile-time evaluation subsystem for Hokkaido. It embeds a
-Rust cubical language backend (located under `src/cubical/`) that type-checks
+Rust cubical language backend that type-checks
 and evaluates cubical source files during compilation, embedding the result as a
-constant in the generated code.
+constant in the generated code.  
+for reference check [cubical_surface_language](cubical_surface_language.md)
 
 ### Cubical type
 
@@ -181,5 +182,5 @@ decimal literal or a chain of `suc(suc(...zero))`. The compiler parses this resu
 - If it parses as a decimal integer → the variable becomes an `int64` constant.
 - If it cannot be parsed as a Nat → the variable becomes a `string` constant
   containing the cubical backend's text output.
-
+  
 There is no runtime cubical evaluation — everything happens during compilation.
