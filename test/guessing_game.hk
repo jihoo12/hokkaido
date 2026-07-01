@@ -1,0 +1,35 @@
+extern fn puts(s: string) -> int
+extern fn printf(fmt: string, ...) -> int
+extern fn scanf(fmt: string, ...) -> int
+extern fn rand() -> int
+extern fn srand(seed: int) -> void
+extern fn time(t: int*) -> int
+
+fn main() -> int {
+    let t: int = 0
+    srand(time(&t))
+
+    let secret: int = rand() % 100 + 1
+
+    let guess: int = 0
+    let attempts: int = 0
+
+    puts("Guess the number (1-100)!")
+
+    for ;; {
+        printf("Enter guess: ")
+        scanf("%ld", &guess)
+        attempts = attempts + 1
+
+        if guess < secret {
+            puts("Too low!")
+        } else if guess > secret {
+            puts("Too high!")
+        } else {
+            printf("Correct! You got it in %ld tries!\n", attempts)
+            break
+        }
+    }
+
+    return 0
+}
