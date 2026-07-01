@@ -251,9 +251,9 @@ binary operators.
 ```
 
 `a >> b` shifts `a` right by `b` bits, sign-extending (an arithmetic, not logical, shift — the
-sign bit is preserved for negative values). There is no left-shift operator. `>>` binds tighter
-than the comparison operators but looser than `+` and `-`, e.g. `a + 1 >> b - 1` parses as
-`(a + 1) >> (b - 1)`.
+sign bit is preserved for negative values). `a << b` shifts `a` left by `b` bits, zero-filling.
+Both `>>` and `<<` bind tighter than comparison operators but looser than `+` and `-`,
+e.g. `a + 1 >> b - 1` parses as `(a + 1) >> (b - 1)`.
 
 ## Function calls
 
