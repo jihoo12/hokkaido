@@ -19,6 +19,8 @@ enum class TokenType {
   Equals, Arrow, FatArrow,
   Eq, Ne, Less, Greater, LessEqual, GreaterEqual,
   AndAnd, OrOr, BitOr, Xor, Shr, Shl,
+  PlusEq, MinusEq, StarEq, SlashEq,
+  AndEq, OrEq, XorEq, ShlEq, ShrEq,
   Semicolon, Comma, Colon, ColonColon, Dot, Ellipsis,
   Newline,
   LParen, RParen, LBrace, RBrace,

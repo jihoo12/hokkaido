@@ -830,12 +830,38 @@ std::unique_ptr<Expr> Parser::parse_assignment() {
   auto left = parse_logical_or();
   if (!left) return nullptr;
 
+  auto is_lvalue = [](Expr *e) {
+    return dynamic_cast<IdentExpr *>(e) ||
+           dynamic_cast<DerefExpr *>(e) ||
+           dynamic_cast<SubscriptExpr *>(e) ||
+           dynamic_cast<FieldAccessExpr *>(e);
+  };
+
+  BinOp compound_op;
+  bool is_compound = false;
+  if (cur_tok.type == TokenType::PlusEq) { compound_op = BinOp::Add; is_compound = true; }
+  else if (cur_tok.type == TokenType::MinusEq) { compound_op = BinOp::Sub; is_compound = true; }
+  else if (cur_tok.type == TokenType::StarEq) { compound_op = BinOp::Mul; is_compound = true; }
+  else if (cur_tok.type == TokenType::SlashEq) { compound_op = BinOp::Div; is_compound = true; }
+  else if (cur_tok.type == TokenType::AndEq) { compound_op = BinOp::BitAnd; is_compound = true; }
+  else if (cur_tok.type == TokenType::OrEq) { compound_op = BinOp::BitOr; is_compound = true; }
+  else if (cur_tok.type == TokenType::XorEq) { compound_op = BinOp::Xor; is_compound = true; }
+  else if (cur_tok.type == TokenType::ShlEq) { compound_op = BinOp::Shl; is_compound = true; }
+  else if (cur_tok.type == TokenType::ShrEq) { compound_op = BinOp::Shr; is_compound = true; }
+
+  if (is_compound) {
+    if (!is_lvalue(left.get())) {
+      set_error("left side of compound assignment must be a variable, dereference, subscript, or field access");
+      return nullptr;
+    }
+    next_token(); // consume the compound operator
+    auto value = parse_assignment();
+    if (!value) return nullptr;
+    return std::make_unique<CompoundAssignExpr>(std::move(left), compound_op, std::move(value));
+  }
+
   if (cur_tok.type == TokenType::Equals) {
-    bool is_ident = dynamic_cast<IdentExpr *>(left.get()) != nullptr;
-    bool is_deref = dynamic_cast<DerefExpr *>(left.get()) != nullptr;
-    bool is_subscript = dynamic_cast<SubscriptExpr *>(left.get()) != nullptr;
-    bool is_field = dynamic_cast<FieldAccessExpr *>(left.get()) != nullptr;
-    if (!is_ident && !is_deref && !is_subscript && !is_field) {
+    if (!is_lvalue(left.get())) {
       set_error("left side of assignment must be a variable, dereference, subscript, or field access");
       return nullptr;
     }

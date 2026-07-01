@@ -90,6 +90,14 @@ struct AssignExpr : Expr {
     : target(std::move(t)), value(std::move(v)) {}
 };
 
+struct CompoundAssignExpr : Expr {
+  std::unique_ptr<Expr> target;
+  BinOp op;
+  std::unique_ptr<Expr> value;
+  CompoundAssignExpr(std::unique_ptr<Expr> t, BinOp o, std::unique_ptr<Expr> v)
+    : target(std::move(t)), op(o), value(std::move(v)) {}
+};
+
 struct NullExpr : Expr {};
 
 struct AddressOfExpr : Expr {

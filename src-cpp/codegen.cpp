@@ -993,6 +993,35 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
     return val;
   }
 
+  if (auto *compound = dynamic_cast<CompoundAssignExpr *>(expr)) {
+    Type *target_type = nullptr;
+    Value *target_ptr = get_lvalue_ptr(compound->target.get(), &target_type);
+    if (!target_ptr) {
+      errs() << "Error: invalid compound assignment target\n";
+      return nullptr;
+    }
+    Value *current = Builder.CreateLoad(target_type, target_ptr);
+    Value *rhs = eval_expr(compound->value.get(), target_type);
+    if (!rhs) return nullptr;
+    Value *result;
+    switch (compound->op) {
+      case BinOp::Add: result = Builder.CreateAdd(current, rhs); break;
+      case BinOp::Sub: result = Builder.CreateSub(current, rhs); break;
+      case BinOp::Mul: result = Builder.CreateMul(current, rhs); break;
+      case BinOp::Div: result = Builder.CreateSDiv(current, rhs); break;
+      case BinOp::BitAnd: result = Builder.CreateAnd(current, rhs); break;
+      case BinOp::BitOr: result = Builder.CreateOr(current, rhs); break;
+      case BinOp::Xor: result = Builder.CreateXor(current, rhs); break;
+      case BinOp::Shl: result = Builder.CreateShl(current, rhs); break;
+      case BinOp::Shr: result = Builder.CreateAShr(current, rhs); break;
+      default:
+        errs() << "Error: unsupported operator for compound assignment\n";
+        return nullptr;
+    }
+    Builder.CreateStore(result, target_ptr);
+    return result;
+  }
+
   errs() << "Error: unknown expression type\n";
   return nullptr;
 }

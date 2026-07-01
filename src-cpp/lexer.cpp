@@ -52,6 +52,10 @@ Token Lexer::next_token() {
       skip_block_comment();
       return next_token();
     }
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::SlashEq, "/=", 0, l, c};
+    }
     advance();
     return {TokenType::Slash, "/", 0, l, c};
   }
@@ -69,7 +73,13 @@ Token Lexer::next_token() {
   if (ch == '{') { advance(); return {TokenType::LBrace, "{", 0, l, c}; }
   if (ch == '}') { advance(); return {TokenType::RBrace, "}", 0, l, c}; }
   if (ch == ',') { advance(); return {TokenType::Comma, ",", 0, l, c}; }
-  if (ch == '+') { advance(); return {TokenType::Plus, "+", 0, l, c}; }
+  if (ch == '+') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::PlusEq, "+=", 0, l, c};
+    }
+    advance(); return {TokenType::Plus, "+", 0, l, c};
+  }
   if (ch == ':') {
     if (pos + 1 < input.size() && input[pos + 1] == ':') {
       advance(); advance();
@@ -91,6 +101,10 @@ Token Lexer::next_token() {
       advance(); advance();
       return {TokenType::AndAnd, "&&", 0, l, c};
     }
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::AndEq, "&=", 0, l, c};
+    }
     advance();
     return {TokenType::Ampersand, "&", 0, l, c};
   }
@@ -99,12 +113,28 @@ Token Lexer::next_token() {
       advance(); advance();
       return {TokenType::OrOr, "||", 0, l, c};
     }
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::OrEq, "|=", 0, l, c};
+    }
     advance();
     return {TokenType::BitOr, "|", 0, l, c};
   }
-  if (ch == '^') { advance(); return {TokenType::Xor, "^", 0, l, c}; }
+  if (ch == '^') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::XorEq, "^=", 0, l, c};
+    }
+    advance(); return {TokenType::Xor, "^", 0, l, c};
+  }
   if (ch == '~') { advance(); return {TokenType::BitNot, "~", 0, l, c}; }
-  if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
+  if (ch == '*') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::StarEq, "*=", 0, l, c};
+    }
+    advance(); return {TokenType::Star, "*", 0, l, c};
+  }
   if (ch == '[') { advance(); return {TokenType::LSquare, "[", 0, l, c}; }
   if (ch == ']') { advance(); return {TokenType::RSquare, "]", 0, l, c}; }
 
@@ -130,6 +160,10 @@ Token Lexer::next_token() {
     return {TokenType::Eof, "unexpected '!'", 0, l, c};
   }
   if (ch == '<') {
+    if (pos + 2 < input.size() && input[pos + 1] == '<' && input[pos + 2] == '=') {
+      advance(); advance(); advance();
+      return {TokenType::ShlEq, "<<=", 0, l, c};
+    }
     if (pos + 1 < input.size() && input[pos + 1] == '=') {
       advance(); advance();
       return {TokenType::LessEqual, "<=", 0, l, c};
@@ -142,6 +176,10 @@ Token Lexer::next_token() {
     return {TokenType::Less, "<", 0, l, c};
   }
   if (ch == '>') {
+    if (pos + 2 < input.size() && input[pos + 1] == '>' && input[pos + 2] == '=') {
+      advance(); advance(); advance();
+      return {TokenType::ShrEq, ">>=", 0, l, c};
+    }
     if (pos + 1 < input.size() && input[pos + 1] == '=') {
       advance(); advance();
       return {TokenType::GreaterEqual, ">=", 0, l, c};
@@ -159,6 +197,10 @@ Token Lexer::next_token() {
     if (pos + 1 < input.size() && input[pos + 1] == '>') {
       advance(); advance();
       return {TokenType::Arrow, "->", 0, l, c};
+    }
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::MinusEq, "-=", 0, l, c};
     }
     advance();
     return {TokenType::Minus, "-", 0, l, c};

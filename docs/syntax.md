@@ -200,6 +200,22 @@ arr[0] = 1       Assign to an array element
 point.x = 10     Assign to a struct field
 ```
 
+Compound assignment operators combine an operation with assignment:
+
+```
+x += 5           x = x + 5
+x -= 5           x = x - 5
+x *= 5           x = x * 5
+x /= 5           x = x / 5
+x &= y           x = x & y
+x |= y           x = x | y
+x ^= y           x = x ^ y
+x <<= 3          x = x << 3
+x >>= 3          x = x >> 3
+```
+
+The target is evaluated only once (for side-effect safety with dereferences, subscripts, and field accesses). Compound assignment is also an expression and evaluates to the final assigned value.
+
 ## Pointers
 
 ```
