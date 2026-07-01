@@ -137,37 +137,63 @@ move, or optimize the asm block.
 
 ## Cubical
 
-Cubical is a compile-time evaluation subsystem for Hokkaido. It allows running code
-during compilation to generate types, compute constants, or perform metaprogramming.
+Cubical is a compile-time evaluation subsystem for Hokkaido. It embeds a
+Rust cubical language backend (located under `src/cubical/`) that type-checks
+and evaluates cubical source files during compilation, embedding the result as a
+constant in the generated code.
 
 ### Cubical type
 
-The `cubical` type represents a compile-time cubical expression. Variables of type
-`cubical` are evaluated during compilation and can be used where compile-time
-constants are required.
-
-```
-let compile_time_value: cubical = 42
-```
-
-### Cubical functions
-
-A function can accept `cubical` parameters to receive compile-time values:
-
-```
-fn compile_time_add(a: cubical, b: cubical) -> cubical {
-    return a + b
-}
-```
+The `cubical` type is a compile-time placeholder. After evaluation it resolves to
+either `int64` (when the cubical file evaluates to a natural number) or `string`
+(when it evaluates to another type of value).
 
 ### Usage
 
-Cubical expressions are evaluated by the cubical library during compilation.
-The exact feature set is determined by the cubical implementation (currently
-provided as a Rust cubical library that Hokkaido embeds).
+Declare a cubical value by binding a string literal (a path to a `.cub` file) to the
+`cubical` type:
 
-### Relation to generics
+```
+let n: cubical = "path/to/example.cub"
+```
 
-Cubical is separate from generics. While generics provide type-level polymorphism
-at compile time with runtime code generation (monomorphization), cubical provides
-arbitrary compile-time computation that can produce both types and values.
+At compile time, the compiler loads the file, sends it to the Rust cubical backend
+for parsing, type-checking, and evaluation (via normalization-by-evaluation), then
+embeds the resulting constant directly into the LLVM IR.
+
+```
+// --- test/example.cub ---
+// (contains a cubical expression that evaluates to a Nat)
+
+// --- main.hk ---
+let n: cubical = "../test/example.cub"
+
+fn main() -> int {
+    return n       // n is already an int64 constant
+}
+```
+
+### Result resolution
+
+The cubical backend always returns a **natural number** (Nat) encoded as either a
+decimal literal or a chain of `suc(suc(...zero))`. The compiler parses this result:
+
+- If it parses as a decimal integer → the variable becomes an `int64` constant.
+- If it cannot be parsed as a Nat → the variable becomes a `string` constant
+  containing the cubical backend's text output.
+
+There is no runtime cubical evaluation — everything happens during compilation.
+
+### Cubical functions
+
+Functions cannot accept or return `cubical` parameters. A `cubical` declaration
+is always a `let` binding whose initializer is a string path literal. The cubical
+system has no runtime component; it exists purely to produce compile-time constants.
+
+### Cubical backend
+
+The cubical library is a Rust static library (`libcubical_c.a`) linked into the
+Hokkaido compiler. It exports a C FFI function `cubical_eval` that takes a source
+string and returns the evaluated result. The cubical surface language supports
+natural numbers, booleans, the circle type S1, higher inductive types, path types,
+interval operations, sigma types, and more — see the cubical source under `src/cubical/` for the full language reference.
