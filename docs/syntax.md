@@ -31,9 +31,10 @@
 
 ```
 // Line comment (everything after // is ignored)
-```
 
-There is no block comment syntax.
+/* Block comment — can span multiple lines,
+   does not nest (the first */ ends the comment) */
+```
 
 ## Types
 

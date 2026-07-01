@@ -44,6 +44,7 @@ class Lexer {
   char advance();
   void skip_whitespace();
   void skip_line_comment();
+  void skip_block_comment();
 
 public:
   Lexer(const std::string &src) : input(src) {}

@@ -23,6 +23,16 @@ void Lexer::skip_line_comment() {
   while (pos < input.size() && input[pos] != '\n') advance();
 }
 
+void Lexer::skip_block_comment() {
+  while (pos < input.size()) {
+    if (peek() == '*' && pos + 1 < input.size() && input[pos + 1] == '/') {
+      advance(); advance(); // skip */
+      return;
+    }
+    advance();
+  }
+}
+
 Token Lexer::next_token() {
   skip_whitespace();
 
@@ -31,10 +41,19 @@ Token Lexer::next_token() {
   int l = line, c = col;
   char ch = peek();
 
-  // Line comments
-  if (ch == '/' && pos + 1 < input.size() && input[pos + 1] == '/') {
-    skip_line_comment();
-    return next_token();
+  // Line comments and block comments
+  if (ch == '/') {
+    if (pos + 1 < input.size() && input[pos + 1] == '/') {
+      skip_line_comment();
+      return next_token();
+    }
+    if (pos + 1 < input.size() && input[pos + 1] == '*') {
+      advance(); advance(); // skip /*
+      skip_block_comment();
+      return next_token();
+    }
+    advance();
+    return {TokenType::Slash, "/", 0, l, c};
   }
 
   // Newlines (statement separators)
@@ -85,7 +104,6 @@ Token Lexer::next_token() {
     return {TokenType::Eof, err, 0, l, c};
   }
   if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
-  if (ch == '/') { advance(); return {TokenType::Slash, "/", 0, l, c}; }
   if (ch == '[') { advance(); return {TokenType::LSquare, "[", 0, l, c}; }
   if (ch == ']') { advance(); return {TokenType::RSquare, "]", 0, l, c}; }
 
