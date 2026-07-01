@@ -9,7 +9,7 @@ the same line have the same precedence and associate left-to-right.
 |------------|------------------------------------|-----------------------|
 | 1          | `()` `[]` `::<>` `.`               | Call / index / turbofish / field access |
 | 2          | `*` (deref) `&` (addr) `-` (neg) `~` (bitnot) `!` (not) | Unary prefix     |
-| 3          | `*` `/`                            | Multiplicative        |
+| 3          | `*` `/` `%`                        | Multiplicative        |
 | 4          | `+` `-`                            | Additive              |
 | 5          | `<<` `>>`                          | Shift                 |
 | 6          | `&`                                | Bitwise AND           |
@@ -103,6 +103,7 @@ Available on all integer and float types. Integer overflow is two's complement w
 -     Subtraction (binary) / Negation (unary prefix)
 *     Multiplication
 /     Division
+%     Modulo (remainder)
 ```
 
 ```
@@ -110,11 +111,12 @@ let x: int = 10 + 20        // 30
 let y: int = x - 5          // 25
 let z: int = x * y          // 750
 let q: int = z / 10         // 75
+let r: int = q % 7          // 75 % 7 = 5
 let n: int = -q             // -75
 ```
 
-`*` and `/` are level 3. `+` and `-` (binary) are level 4. Unary `-` (negation) is
-level 2.
+`*`, `/`, and `%` are level 3 (multiplicative). `+` and `-` (binary) are level 4.
+Unary `-` (negation) is level 2.
 
 ## Shift operators
 
@@ -155,6 +157,7 @@ Compound assignment applies an operation and an assignment in one step:
 -=    Subtract and assign
 *=    Multiply and assign
 /=    Divide and assign
+%=    Modulo and assign
 &=    Bitwise AND and assign
 |=    Bitwise OR and assign
 ^=    Bitwise XOR and assign

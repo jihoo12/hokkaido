@@ -127,6 +127,13 @@ Token Lexer::next_token() {
     }
     advance(); return {TokenType::Xor, "^", 0, l, c};
   }
+  if (ch == '%') {
+    if (pos + 1 < input.size() && input[pos + 1] == '=') {
+      advance(); advance();
+      return {TokenType::PercentEq, "%=", 0, l, c};
+    }
+    advance(); return {TokenType::Percent, "%", 0, l, c};
+  }
   if (ch == '~') { advance(); return {TokenType::BitNot, "~", 0, l, c}; }
   if (ch == '*') {
     if (pos + 1 < input.size() && input[pos + 1] == '=') {
@@ -286,6 +293,8 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "if") return {TokenType::If, id, 0, l, c};
   if (id == "else") return {TokenType::Else, id, 0, l, c};
   if (id == "for") return {TokenType::For, id, 0, l, c};
+  if (id == "break") return {TokenType::Break, id, 0, l, c};
+  if (id == "continue") return {TokenType::Continue, id, 0, l, c};
   if (id == "match") return {TokenType::Match, id, 0, l, c};
   if (id == "enum") return {TokenType::Enum, id, 0, l, c};
   if (id == "null") return {TokenType::Null, id, 0, l, c};

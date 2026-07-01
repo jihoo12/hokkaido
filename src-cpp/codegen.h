@@ -126,9 +126,18 @@ private:
   std::string mangle_name(const std::string &fn_name,
                            const std::vector<TypeAnnotation> &type_args);
   void substitute_type_params(TypeAnnotation &ann,
-                               const std::vector<std::string> &param_names,
-                               const std::vector<TypeAnnotation> &type_args);
+                                const std::vector<std::string> &param_names,
+                                const std::vector<TypeAnnotation> &type_args);
   bool monomorphize_and_codegen(FnDecl *template_decl,
-                                 const std::vector<TypeAnnotation> &type_args,
-                                 const std::string &mangled_name);
+                                  const std::vector<TypeAnnotation> &type_args,
+                                  const std::string &mangled_name);
+
+  // Loop state for break/continue
+  struct LoopInfo {
+    llvm::BasicBlock *update_bb;
+    llvm::BasicBlock *end_bb;
+  };
+  std::vector<LoopInfo> loop_stack;
+  bool gen_break_stmt(BreakStmt *stmt);
+  bool gen_continue_stmt(ContinueStmt *stmt);
 };

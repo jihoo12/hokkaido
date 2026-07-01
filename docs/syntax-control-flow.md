@@ -89,16 +89,46 @@ for ; done; {
 
 ### Infinite loop
 
-Omit all three parts, or just the condition:
+Omit all three parts:
 
 ```
 for ;; {
-    // runs forever — break with return or (currently) nothing
+    // runs forever — exit with break or return
 }
 ```
 
-Hokkaido has no `break` or `continue` — use `return` to exit early, or restructure
-the condition to become falsy when done.
+### Break
+
+The `break` statement exits the innermost enclosing loop immediately, transferring
+control to the first statement after the loop.
+
+```
+for ;; {
+    if done {
+        break
+    }
+    // ...
+}
+// execution continues here after break
+```
+
+### Continue
+
+The `continue` statement skips the rest of the current loop iteration and jumps
+to the loop's update expression (if any), followed by the condition check.
+
+```
+for let i: int = 0; i < 10; i = i + 1 {
+    if i % 2 == 0 {
+        continue      // skip even numbers
+    }
+    // process odd i only
+}
+```
+
+### Errors
+
+Using `break` or `continue` outside a loop is a compile-time error.
 
 ### Update expression
 

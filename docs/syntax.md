@@ -14,12 +14,14 @@ deliberately minimal.
 - [Return](syntax-functions.md#return)
 - [If / Else](syntax-control-flow.md#if--else)
 - [For loop](syntax-control-flow.md#for-loop)
+- [Break](syntax-control-flow.md#break)
+- [Continue](syntax-control-flow.md#continue)
 - [Match](syntax-control-flow.md#match)
 - [Operator precedence](syntax-expressions.md#operator-precedence)
 - [Comparison operators](syntax-expressions.md#comparison-operators)
 - [Logical operators](syntax-expressions.md#logical-operators)
 - [Bitwise operators](syntax-expressions.md#bitwise-operators)
-- [Arithmetic operators](syntax-expressions.md#arithmetic-operators)
+- [Arithmetic operators](syntax-expressions.md#arithmetic-operators) (including `%` modulo)
 - [Shift operators](syntax-expressions.md#shift-operators)
 - [Assignment](syntax-expressions.md#assignment)
 - [Pointers](syntax-expressions.md#pointers)
@@ -33,6 +35,7 @@ deliberately minimal.
 - [Freestanding mode](syntax-ffi-cubical.md#freestanding-mode)
 - [Inline assembly](syntax-ffi-cubical.md#inline-assembly)
 - [Cubical](syntax-ffi-cubical.md#cubical)
+- [Example: Number guessing game](example-guess.md)
 
 ## Comments
 

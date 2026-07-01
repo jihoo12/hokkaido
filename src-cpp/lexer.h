@@ -8,7 +8,7 @@
 
 enum class TokenType {
   Eof,
-  Let, Fn, Return, Asm, If, Else, For, Struct, Include, Namespace, Extern,
+  Let, Fn, Return, Asm, If, Else, For, Break, Continue, Struct, Include, Namespace, Extern,
   Match, Enum,
   Null,
   Cubical,
@@ -19,13 +19,13 @@ enum class TokenType {
   Equals, Arrow, FatArrow,
   Eq, Ne, Less, Greater, LessEqual, GreaterEqual,
   AndAnd, OrOr, BitOr, Xor, Shr, Shl,
-  PlusEq, MinusEq, StarEq, SlashEq,
+  PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
   AndEq, OrEq, XorEq, ShlEq, ShrEq,
   Semicolon, Comma, Colon, ColonColon, Dot, Ellipsis,
   Newline,
   LParen, RParen, LBrace, RBrace,
   LSquare, RSquare,
-  Plus, Minus, Star, Slash, Ampersand, BitNot,
+  Plus, Minus, Star, Slash, Percent, Ampersand, BitNot,
 };
 
 struct Token {

@@ -727,6 +727,12 @@ std::unique_ptr<Stmt> Parser::parse_stmt() {
   if (cur_tok.type == TokenType::For) {
     return parse_for_stmt();
   }
+  if (cur_tok.type == TokenType::Break) {
+    return parse_break_stmt();
+  }
+  if (cur_tok.type == TokenType::Continue) {
+    return parse_continue_stmt();
+  }
   auto expr = parse_expr();
   if (!expr) return nullptr;
   return std::make_unique<ExprStmt>(std::move(expr));
@@ -863,6 +869,16 @@ std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
   return stmt;
 }
 
+std::unique_ptr<BreakStmt> Parser::parse_break_stmt() {
+  next_token(); // consume 'break'
+  return std::make_unique<BreakStmt>();
+}
+
+std::unique_ptr<ContinueStmt> Parser::parse_continue_stmt() {
+  next_token(); // consume 'continue'
+  return std::make_unique<ContinueStmt>();
+}
+
 // -------------------------------------------------------------------------
 // Expressions (recursive descent, operator precedence)
 // -------------------------------------------------------------------------
@@ -888,6 +904,7 @@ std::unique_ptr<Expr> Parser::parse_assignment() {
   else if (cur_tok.type == TokenType::MinusEq) { compound_op = BinOp::Sub; is_compound = true; }
   else if (cur_tok.type == TokenType::StarEq) { compound_op = BinOp::Mul; is_compound = true; }
   else if (cur_tok.type == TokenType::SlashEq) { compound_op = BinOp::Div; is_compound = true; }
+  else if (cur_tok.type == TokenType::PercentEq) { compound_op = BinOp::Mod; is_compound = true; }
   else if (cur_tok.type == TokenType::AndEq) { compound_op = BinOp::BitAnd; is_compound = true; }
   else if (cur_tok.type == TokenType::OrEq) { compound_op = BinOp::BitOr; is_compound = true; }
   else if (cur_tok.type == TokenType::XorEq) { compound_op = BinOp::Xor; is_compound = true; }
@@ -1043,8 +1060,11 @@ std::unique_ptr<Expr> Parser::parse_multiplicative() {
   auto left = parse_unary();
   if (!left) return nullptr;
 
-  while (cur_tok.type == TokenType::Star || cur_tok.type == TokenType::Slash) {
-    BinOp op = (cur_tok.type == TokenType::Star) ? BinOp::Mul : BinOp::Div;
+  while (cur_tok.type == TokenType::Star || cur_tok.type == TokenType::Slash || cur_tok.type == TokenType::Percent) {
+    BinOp op;
+    if (cur_tok.type == TokenType::Star) op = BinOp::Mul;
+    else if (cur_tok.type == TokenType::Slash) op = BinOp::Div;
+    else op = BinOp::Mod;
     next_token();
     auto right = parse_unary();
     if (!right) return nullptr;

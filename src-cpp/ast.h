@@ -32,7 +32,7 @@ struct TypeAnnotation {
 };
 
 enum class BinOp {
-  Add, Sub, Mul, Div,
+  Add, Sub, Mul, Div, Mod,
   Eq, Ne, Less, Greater, Le, Ge,
   And, Or, Shr, Shl,
   BitAnd, BitOr, Xor
@@ -231,6 +231,10 @@ struct LetStmt : Stmt {
 struct ReturnStmt : Stmt {
   std::unique_ptr<Expr> value;
 };
+
+struct BreakStmt : Stmt {};
+
+struct ContinueStmt : Stmt {};
 
 struct IfStmt : Stmt {
   std::unique_ptr<Expr> condition;

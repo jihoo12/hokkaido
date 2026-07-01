@@ -694,6 +694,10 @@ bool CodeGen::monomorphize_and_codegen(FnDecl *template_decl,
         walk_expr(for_s->condition.get());
         walk_expr(for_s->update.get());
         walk_body(for_s->body);
+      } else if (dynamic_cast<BreakStmt *>(stmt.get())) {
+        // no expressions to walk
+      } else if (dynamic_cast<ContinueStmt *>(stmt.get())) {
+        // no expressions to walk
       }
     }
   };
@@ -1080,6 +1084,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       case BinOp::Sub: return is_float ? Builder.CreateFSub(l, r) : Builder.CreateSub(l, r);
       case BinOp::Mul: return is_float ? Builder.CreateFMul(l, r) : Builder.CreateMul(l, r);
       case BinOp::Div: return is_float ? Builder.CreateFDiv(l, r) : Builder.CreateSDiv(l, r);
+      case BinOp::Mod: return Builder.CreateSRem(l, r);
       case BinOp::Eq: {
         Value *cmp = Builder.CreateICmpEQ(l, r);
         if (expected_type && !expected_type->isIntegerTy(1))
@@ -1267,6 +1272,7 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       case BinOp::Sub: result = Builder.CreateSub(current, rhs); break;
       case BinOp::Mul: result = Builder.CreateMul(current, rhs); break;
       case BinOp::Div: result = Builder.CreateSDiv(current, rhs); break;
+      case BinOp::Mod: result = Builder.CreateSRem(current, rhs); break;
       case BinOp::BitAnd: result = Builder.CreateAnd(current, rhs); break;
       case BinOp::BitOr: result = Builder.CreateOr(current, rhs); break;
       case BinOp::Xor: result = Builder.CreateXor(current, rhs); break;
@@ -1667,6 +1673,10 @@ bool CodeGen::gen_stmt(Stmt *stmt) {
     return gen_if_stmt(if_);
   if (auto *for_ = dynamic_cast<ForStmt *>(stmt))
     return gen_for_stmt(for_);
+  if (auto *brk = dynamic_cast<BreakStmt *>(stmt))
+    return gen_break_stmt(brk);
+  if (auto *cont = dynamic_cast<ContinueStmt *>(stmt))
+    return gen_continue_stmt(cont);
   if (auto *expr = dynamic_cast<ExprStmt *>(stmt)) {
     Value *v = eval_expr(expr->expr.get(), Type::getInt64Ty(Context));
     return v != nullptr;
@@ -1753,9 +1763,11 @@ bool CodeGen::gen_for_stmt(ForStmt *stmt) {
   }
 
   Builder.SetInsertPoint(body_bb);
+  loop_stack.push_back({update_bb, end_bb});
   for (auto &s : stmt->body) {
     if (!gen_stmt(s.get())) return false;
   }
+  loop_stack.pop_back();
   if (!Builder.GetInsertBlock()->getTerminator())
     Builder.CreateBr(update_bb);
 
@@ -1768,6 +1780,24 @@ bool CodeGen::gen_for_stmt(ForStmt *stmt) {
     Builder.CreateBr(cond_bb);
 
   Builder.SetInsertPoint(end_bb);
+  return true;
+}
+
+bool CodeGen::gen_break_stmt(BreakStmt *stmt) {
+  if (loop_stack.empty()) {
+    errs() << "Error: 'break' outside of loop\n";
+    return false;
+  }
+  Builder.CreateBr(loop_stack.back().end_bb);
+  return true;
+}
+
+bool CodeGen::gen_continue_stmt(ContinueStmt *stmt) {
+  if (loop_stack.empty()) {
+    errs() << "Error: 'continue' outside of loop\n";
+    return false;
+  }
+  Builder.CreateBr(loop_stack.back().update_bb);
   return true;
 }
 
