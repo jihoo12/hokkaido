@@ -716,6 +716,7 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
       cur_tok.type == TokenType::LParen ||
       cur_tok.type == TokenType::LSquare ||
       cur_tok.type == TokenType::Minus ||
+      cur_tok.type == TokenType::BitNot ||
       cur_tok.type == TokenType::Star ||
       cur_tok.type == TokenType::Ampersand ||
       cur_tok.type == TokenType::Null) {
@@ -860,14 +861,53 @@ std::unique_ptr<Expr> Parser::parse_logical_or() {
 }
 
 std::unique_ptr<Expr> Parser::parse_logical_and() {
-  auto left = parse_comparison();
+  auto left = parse_bitwise_or();
   if (!left) return nullptr;
 
   while (cur_tok.type == TokenType::AndAnd) {
     next_token();
-    auto right = parse_comparison();
+    auto right = parse_bitwise_or();
     if (!right) return nullptr;
     left = std::make_unique<BinaryExpr>(std::move(left), BinOp::And, std::move(right));
+  }
+  return left;
+}
+
+std::unique_ptr<Expr> Parser::parse_bitwise_or() {
+  auto left = parse_bitwise_xor();
+  if (!left) return nullptr;
+
+  while (cur_tok.type == TokenType::BitOr) {
+    next_token();
+    auto right = parse_bitwise_xor();
+    if (!right) return nullptr;
+    left = std::make_unique<BinaryExpr>(std::move(left), BinOp::BitOr, std::move(right));
+  }
+  return left;
+}
+
+std::unique_ptr<Expr> Parser::parse_bitwise_xor() {
+  auto left = parse_bitwise_and();
+  if (!left) return nullptr;
+
+  while (cur_tok.type == TokenType::Xor) {
+    next_token();
+    auto right = parse_bitwise_and();
+    if (!right) return nullptr;
+    left = std::make_unique<BinaryExpr>(std::move(left), BinOp::Xor, std::move(right));
+  }
+  return left;
+}
+
+std::unique_ptr<Expr> Parser::parse_bitwise_and() {
+  auto left = parse_comparison();
+  if (!left) return nullptr;
+
+  while (cur_tok.type == TokenType::Ampersand) {
+    next_token();
+    auto right = parse_comparison();
+    if (!right) return nullptr;
+    left = std::make_unique<BinaryExpr>(std::move(left), BinOp::BitAnd, std::move(right));
   }
   return left;
 }
@@ -947,7 +987,13 @@ std::unique_ptr<Expr> Parser::parse_unary() {
     next_token();
     auto operand = parse_unary();
     if (!operand) return nullptr;
-    return std::make_unique<UnaryExpr>(std::move(operand));
+    return std::make_unique<UnaryExpr>(UnaryOp::Neg, std::move(operand));
+  }
+  if (cur_tok.type == TokenType::BitNot) {
+    next_token();
+    auto operand = parse_unary();
+    if (!operand) return nullptr;
+    return std::make_unique<UnaryExpr>(UnaryOp::BitNot, std::move(operand));
   }
   if (cur_tok.type == TokenType::Star) {
     next_token();

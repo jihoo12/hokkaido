@@ -99,10 +99,11 @@ Token Lexer::next_token() {
       advance(); advance();
       return {TokenType::OrOr, "||", 0, l, c};
     }
-    std::string err = "unexpected character '|' (did you mean '||'?)";
     advance();
-    return {TokenType::Eof, err, 0, l, c};
+    return {TokenType::BitOr, "|", 0, l, c};
   }
+  if (ch == '^') { advance(); return {TokenType::Xor, "^", 0, l, c}; }
+  if (ch == '~') { advance(); return {TokenType::BitNot, "~", 0, l, c}; }
   if (ch == '*') { advance(); return {TokenType::Star, "*", 0, l, c}; }
   if (ch == '[') { advance(); return {TokenType::LSquare, "[", 0, l, c}; }
   if (ch == ']') { advance(); return {TokenType::RSquare, "]", 0, l, c}; }

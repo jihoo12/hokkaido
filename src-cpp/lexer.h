@@ -18,12 +18,12 @@ enum class TokenType {
   StringLiteral,
   Equals, Arrow, FatArrow,
   Eq, Ne, Less, Greater, LessEqual, GreaterEqual,
-  AndAnd, OrOr, Shr, Shl,
+  AndAnd, OrOr, BitOr, Xor, Shr, Shl,
   Semicolon, Comma, Colon, ColonColon, Dot, Ellipsis,
   Newline,
   LParen, RParen, LBrace, RBrace,
   LSquare, RSquare,
-  Plus, Minus, Star, Slash, Ampersand,
+  Plus, Minus, Star, Slash, Ampersand, BitNot,
 };
 
 struct Token {

@@ -68,6 +68,9 @@ private:
   std::unique_ptr<Expr> parse_assignment();
   std::unique_ptr<Expr> parse_logical_or();
   std::unique_ptr<Expr> parse_logical_and();
+  std::unique_ptr<Expr> parse_bitwise_or();
+  std::unique_ptr<Expr> parse_bitwise_xor();
+  std::unique_ptr<Expr> parse_bitwise_and();
   std::unique_ptr<Expr> parse_comparison();
   std::unique_ptr<Expr> parse_shift();
   std::unique_ptr<Expr> parse_additive();

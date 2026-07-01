@@ -789,9 +789,15 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   if (auto *un = dynamic_cast<UnaryExpr *>(expr)) {
     Value *op = eval_expr(un->operand.get(), expected_type);
     if (!op) return nullptr;
-    if (expected_type && expected_type->isFPOrFPVectorTy())
-      return Builder.CreateFNeg(op);
-    return Builder.CreateNeg(op);
+    switch (un->op) {
+      case UnaryOp::BitNot:
+        return Builder.CreateNot(op);
+      case UnaryOp::Neg:
+      default:
+        if (expected_type && expected_type->isFPOrFPVectorTy())
+          return Builder.CreateFNeg(op);
+        return Builder.CreateNeg(op);
+    }
   }
 
   if (auto *bin = dynamic_cast<BinaryExpr *>(expr)) {
@@ -914,6 +920,12 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
         return Builder.CreateAShr(l, r);
       case BinOp::Shl:
         return Builder.CreateShl(l, r);
+      case BinOp::BitAnd:
+        return Builder.CreateAnd(l, r);
+      case BinOp::BitOr:
+        return Builder.CreateOr(l, r);
+      case BinOp::Xor:
+        return Builder.CreateXor(l, r);
     }
   }
 

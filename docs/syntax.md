@@ -246,6 +246,19 @@ than `+` and `-` — the same precedence hierarchy as C. They return `bool` (`tr
 `&&` and `||` short-circuit and return `bool` (`true` / `false`). Each operand is
 treated as truthy when non-zero (the same "nonzero is true" rule as `if` conditions).
 
+## Bitwise operators
+
+```
+&       Bitwise AND
+|       Bitwise OR
+^       Bitwise XOR
+~       Bitwise NOT (unary prefix)
+```
+
+Bitwise `&`, `|`, `^` operate on integers and return `int`. `~` is a unary prefix
+operator that inverts all bits. Precedence (highest to lowest within bitwise ops):
+`~` (unary), then `&`, then `^`, then `|` — matching C.
+
 ## Arithmetic operators
 
 ```

@@ -33,7 +33,12 @@ struct TypeAnnotation {
 enum class BinOp {
   Add, Sub, Mul, Div,
   Eq, Ne, Less, Greater, Le, Ge,
-  And, Or, Shr, Shl
+  And, Or, Shr, Shl,
+  BitAnd, BitOr, Xor
+};
+
+enum class UnaryOp {
+  Neg, BitNot
 };
 
 struct Expr {
@@ -56,8 +61,9 @@ struct IdentExpr : Expr {
 };
 
 struct UnaryExpr : Expr {
+  UnaryOp op;
   std::unique_ptr<Expr> operand;
-  UnaryExpr(std::unique_ptr<Expr> o) : operand(std::move(o)) {}
+  UnaryExpr(UnaryOp o, std::unique_ptr<Expr> e) : op(o), operand(std::move(e)) {}
 };
 
 struct BinaryExpr : Expr {
