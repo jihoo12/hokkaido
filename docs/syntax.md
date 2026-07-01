@@ -104,11 +104,25 @@ fn main() -> int {
 fn log(msg: string) -> void {
   asm("nop")
 }
+
+fn main(argc: int, argv: int8**) -> int {
+  return argc
+}
 ```
 
 A `fn main() -> int` entry point is required at the top level of the program (i.e. not inside a
-`namespace`). `main` must return `int`. If a function falls off the end of its body without an
-explicit `return`, it returns a zero value of its declared type.
+`namespace`). `main` must return `int`. `main` may optionally take two parameters:
+
+- `argc: int` — argument count (automatically sign-extended from `i32` to `int64`)
+- `argv: int8**` — argument vector (`char **` from the C runtime)
+
+```
+fn main() -> int { ... }                       // no arguments
+fn main(argc: int, argv: int8**) -> int { ... } // argc / argv
+```
+
+If a function falls off the end of its body without an explicit `return`, it returns a zero value
+of its declared type.
 
 ## Return
 

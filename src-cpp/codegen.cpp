@@ -383,6 +383,23 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
     return false;
   }
 
+  if (user_main->params.size() != 0 && user_main->params.size() != 2) {
+    errs() << "Error: main function must have 0 or 2 parameters"
+              " (argc: int, argv: int8**)\n";
+    return false;
+  }
+  if (user_main->params.size() == 2) {
+    // argc: int (Int64), argv: int8** (Int8, pointer_depth=2)
+    auto &p0 = user_main->params[0];
+    auto &p1 = user_main->params[1];
+    if (p0.type_ann.kind != TypeKind::Int64 ||
+        p1.type_ann.kind != TypeKind::Int8 ||
+        p1.type_ann.pointer_depth != 2) {
+      errs() << "Error: main parameters must be (argc: int, argv: int8**)\n";
+      return false;
+    }
+  }
+
   // Pass 2: generate function bodies (extern declarations have none —
   // they're foreign symbols resolved at link time)
   for (auto *fn : fn_decls) {
@@ -404,7 +421,24 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
 }
 
 bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
-  FunctionType *FT = FunctionType::get(Type::getInt32Ty(Context), false);
+  Function *user_main = M.getFunction("__user_main");
+  bool needs_args = (user_main && user_main->arg_size() == 2 && !freestanding);
+
+  // Build the C main signature:
+  //   int main(int argc, char *argv[])
+  // The C runtime on Linux x86-64 always pushes argc / argv, so the wrapper
+  // always declares them; we just don't forward them when the user's main
+  // doesn't need them.
+  // In freestanding mode, main is a raw ELF entry point (no CRT), so it
+  // doesn't receive argc/argv as normal function parameters.
+  std::vector<Type *> main_param_types;
+  if (freestanding) {
+    main_param_types = {};
+  } else {
+    main_param_types = {Type::getInt32Ty(Context),
+                        PointerType::getUnqual(Context)};
+  }
+  FunctionType *FT = FunctionType::get(Type::getInt32Ty(Context), main_param_types, false);
   MainFn = Function::Create(FT, Function::ExternalLinkage, "main", &M);
   EntryBB = BasicBlock::Create(Context, "entry", MainFn);
   Builder.SetInsertPoint(EntryBB);
@@ -418,21 +452,24 @@ bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
   }
 
   // Call user main and return its value truncated to i32
-  Function *user_main = M.getFunction("__user_main");
   Value *result;
   if (user_main) {
-    result = Builder.CreateCall(user_main, {});
+    if (needs_args) {
+      Function::arg_iterator ai = MainFn->arg_begin();
+      Value *argc_i32 = ai;     // i32
+      Value *argv = ++ai;       // ptr (i8**)
+      argc_i32->setName("argc");
+      argv->setName("argv");
+      Value *argc_i64 = Builder.CreateSExt(argc_i32, Type::getInt64Ty(Context), "argc.ext");
+      result = Builder.CreateCall(user_main, {argc_i64, argv});
+    } else {
+      result = Builder.CreateCall(user_main, {});
+    }
   } else {
     result = ConstantInt::get(Type::getInt64Ty(Context), 0);
   }
 
   if (freestanding) {
-    // There is no CRT here: this `main` is itself the raw ELF entry point
-    // (the suggested link command passes `--entry=main`), and there is no
-    // libc `exit()` to fall back on either. A normal `ret` would pop
-    // whatever garbage happens to be on the stack as a return address and
-    // jump to it, so instead terminate directly via the exit(2) syscall —
-    // `rax = 60` (exit), `rdi = status` — which never returns.
     FunctionType *AsmFT =
         FunctionType::get(Type::getVoidTy(Context), {Type::getInt64Ty(Context)}, false);
     InlineAsm *ExitSyscall = InlineAsm::get(
