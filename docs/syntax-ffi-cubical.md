@@ -183,17 +183,3 @@ decimal literal or a chain of `suc(suc(...zero))`. The compiler parses this resu
   containing the cubical backend's text output.
 
 There is no runtime cubical evaluation — everything happens during compilation.
-
-### Cubical functions
-
-Functions cannot accept or return `cubical` parameters. A `cubical` declaration
-is always a `let` binding whose initializer is a string path literal. The cubical
-system has no runtime component; it exists purely to produce compile-time constants.
-
-### Cubical backend
-
-The cubical library is a Rust static library (`libcubical_c.a`) linked into the
-Hokkaido compiler. It exports a C FFI function `cubical_eval` that takes a source
-string and returns the evaluated result. The cubical surface language supports
-natural numbers, booleans, the circle type S1, higher inductive types, path types,
-interval operations, sigma types, and more — see the cubical source under `src/cubical/` for the full language reference.
