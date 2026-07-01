@@ -232,8 +232,9 @@ p = p - 1                // subtract from pointer
 >=      Greater than or equal
 ```
 
-Comparison operators have lower precedence than `>>`, which in turn binds looser than `+` and
-`-`. They produce an `int` (`1` for true, `0` for false) rather than a distinct boolean value.
+Comparison operators have lower precedence than `<<` and `>>`, which in turn bind lower
+than `+` and `-` — the same precedence hierarchy as C. They produce an `int` (`1` for
+true, `0` for false) rather than a distinct boolean value.
 
 ## Logical operators
 
@@ -260,14 +261,16 @@ binary operators.
 ## Shift operators
 
 ```
->>      Arithmetic right shift
-<<      Arithmetic left shift
+>>      Right shift (arithmetic — sign-extending)
+<<      Left shift (zero-filling)
 ```
 
-`a >> b` shifts `a` right by `b` bits, sign-extending (an arithmetic, not logical, shift — the
-sign bit is preserved for negative values). `a << b` shifts `a` left by `b` bits, zero-filling.
-Both `>>` and `<<` bind tighter than comparison operators but looser than `+` and `-`,
-e.g. `a + 1 >> b - 1` parses as `(a + 1) >> (b - 1)`.
+`a >> b` shifts `a` right by `b` bits, sign-extending (the sign bit is preserved for
+negative values), matching C's implementation-defined signed right shift on GCC/Clang.
+`a << b` shifts `a` left by `b` bits, zero-filling — the same as C.
+
+Precedence matches C: `<<` and `>>` bind tighter than comparison operators but looser
+than `+` and `-`, so `a + 1 >> b - 1` parses as `(a + 1) >> (b - 1)`.
 
 ## Function calls
 
