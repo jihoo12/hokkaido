@@ -1,0 +1,1 @@
+can we improve the struct? for make it work like ADT(algebaric data types) like rust's enum?

@@ -282,7 +282,7 @@ matches, the result is zero.
 _                           Wildcard — matches anything, binds nothing
 123                         Literal — matches an exact integer/float/string/null
 name                        Variable — matches anything, binds the value to name
-Point { x: 0, y: _ }       Struct — matches fields against sub-patterns
+Point { x: 0, y: _ }        Struct — matches fields against sub-patterns
 Point { x, y }              Struct — shorthand for `Point { x: x, y: y }`
 ```
 
