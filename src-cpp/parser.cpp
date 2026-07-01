@@ -1,5 +1,6 @@
 #include "parser.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -97,19 +98,26 @@ TypeAnnotation Parser::parse_type_annotation() {
     ann = {TypeKind::Cubical};
     next_token();
   } else if (cur_tok.type == TokenType::Identifier) {
-    // Struct type: the identifier is the struct name (possibly namespaced,
-    // e.g. foo::Point or a::b::Point).
-    ann = {TypeKind::Struct};
-    ann.struct_name = cur_tok.text;
-    next_token();
-    while (cur_tok.type == TokenType::ColonColon) {
-      next_token(); // consume '::'
-      if (cur_tok.type != TokenType::Identifier) {
-        set_error("expected identifier after '::' in type name");
-        return ann;
-      }
-      ann.struct_name += "::" + cur_tok.text;
+    // Check if this is a type parameter name
+    if (type_param_names.find(cur_tok.text) != type_param_names.end()) {
+      ann = {TypeKind::TypeParam};
+      ann.struct_name = cur_tok.text;
       next_token();
+    } else {
+      // Struct type: the identifier is the struct name (possibly namespaced,
+      // e.g. foo::Point or a::b::Point).
+      ann = {TypeKind::Struct};
+      ann.struct_name = cur_tok.text;
+      next_token();
+      while (cur_tok.type == TokenType::ColonColon) {
+        next_token(); // consume '::'
+        if (cur_tok.type != TokenType::Identifier) {
+          set_error("expected identifier after '::' in type name");
+          return ann;
+        }
+        ann.struct_name += "::" + cur_tok.text;
+        next_token();
+      }
     }
   } else {
     set_error("expected type (void, int8, int32, int64, float, bool, string, cubical, or struct name)");
@@ -504,6 +512,39 @@ std::unique_ptr<FnDecl> Parser::parse_fn_decl() {
   std::string name = cur_tok.text;
   next_token();
 
+  // Optional generic type parameter list: <T, U>
+  std::vector<std::string> type_params;
+  if (cur_tok.type == TokenType::Less) {
+    next_token(); // consume '<'
+    while (cur_tok.type != TokenType::Greater) {
+      if (!type_params.empty()) {
+        if (cur_tok.type != TokenType::Comma) {
+          set_error("expected ',' or '>' in type parameter list");
+          return nullptr;
+        }
+        next_token();
+      }
+      if (cur_tok.type != TokenType::Identifier) {
+        set_error("expected type parameter name");
+        return nullptr;
+      }
+      std::string tp_name = cur_tok.text;
+      // Check for duplicate
+      if (type_param_names.find(tp_name) != type_param_names.end() ||
+          std::find(type_params.begin(), type_params.end(), tp_name) != type_params.end()) {
+        set_error("duplicate type parameter '" + tp_name + "'");
+        return nullptr;
+      }
+      type_params.push_back(tp_name);
+      next_token();
+    }
+    next_token(); // consume '>'
+  }
+
+  // Push type params into scope for parsing parameter/return types and body
+  for (auto &tp : type_params)
+    type_param_names.insert(tp);
+
   if (cur_tok.type != TokenType::LParen) {
     set_error("expected '(' after function name");
     return nullptr;
@@ -557,6 +598,10 @@ std::unique_ptr<FnDecl> Parser::parse_fn_decl() {
   decl->params = std::move(params);
   decl->return_type = return_type;
   decl->body = std::move(body);
+  decl->type_params = std::move(type_params);
+  // Pop type params from scope
+  for (auto &tp : decl->type_params)
+    type_param_names.erase(tp);
   return decl;
 }
 
@@ -1138,6 +1183,10 @@ std::unique_ptr<Expr> Parser::parse_primary() {
     next_token();
     while (cur_tok.type == TokenType::ColonColon) {
       next_token(); // consume '::'
+      // Turbofish: fn::<type1, type2>(args)
+      if (cur_tok.type == TokenType::Less) {
+        return parse_turbofish_call(name);
+      }
       if (cur_tok.type != TokenType::Identifier) {
         set_error("expected identifier after '::'");
         return nullptr;
@@ -1230,6 +1279,54 @@ std::unique_ptr<Expr> Parser::parse_call_rest(const std::string &name) {
   auto expr = std::make_unique<CallExpr>();
   expr->callee = name;
   expr->args = std::move(args);
+  return expr;
+}
+
+// Parse a turbofish generic call: name::<type1, type2>(args...)
+// The current token is '<' (consumed after '::' by parse_primary).
+std::unique_ptr<Expr> Parser::parse_turbofish_call(const std::string &name) {
+  next_token(); // consume '<'
+
+  std::vector<TypeAnnotation> type_args;
+  while (cur_tok.type != TokenType::Greater) {
+    if (!type_args.empty()) {
+      if (cur_tok.type != TokenType::Comma) {
+        set_error("expected ',' or '>' in type arguments");
+        return nullptr;
+      }
+      next_token();
+    }
+    TypeAnnotation ta = parse_type_annotation();
+    if (has_error) return nullptr;
+    type_args.push_back(ta);
+  }
+  next_token(); // consume '>'
+
+  if (cur_tok.type != TokenType::LParen) {
+    set_error("expected '(' after type arguments in generic call");
+    return nullptr;
+  }
+  next_token(); // consume '('
+
+  std::vector<std::unique_ptr<Expr>> args;
+  while (cur_tok.type != TokenType::RParen) {
+    if (!args.empty()) {
+      if (cur_tok.type != TokenType::Comma) {
+        set_error("expected ',' or ')' in arguments");
+        return nullptr;
+      }
+      next_token();
+    }
+    auto arg = parse_expr();
+    if (!arg) return nullptr;
+    args.push_back(std::move(arg));
+  }
+  next_token(); // consume ')'
+
+  auto expr = std::make_unique<CallExpr>();
+  expr->callee = name;
+  expr->args = std::move(args);
+  expr->type_args = std::move(type_args);
   return expr;
 }
 

@@ -1,6 +1,7 @@
 #include "codegen.h"
 
 #include <fstream>
+#include <functional>
 #include <iostream>
 
 #include "llvm/IR/Constants.h"
@@ -31,6 +32,11 @@ Type *CodeGen::get_llvm_type(TypeKind kind) {
     case TypeKind::String:  return PointerType::getUnqual(Context);
     case TypeKind::Cubical: return Type::getInt64Ty(Context);
     case TypeKind::Struct:  return nullptr; // must use annotation overload
+    case TypeKind::TypeParam:
+      // TypeParams should be substituted before codegen; if we reach here
+      // it's a bug.
+      errs() << "Internal error: unresolved type parameter in codegen\n";
+      return nullptr;
   }
   return nullptr;
 }
@@ -186,6 +192,47 @@ TypeAnnotation CodeGen::resolve_expr_type(Expr *expr) {
     // Fallback: check if it's a struct constructor
     if (struct_types.count(ctor->variant_name) > 0)
       return {TypeKind::Struct, 0, 0, ctor->variant_name};
+    return {TypeKind::Void};
+  }
+  if (auto *call = dynamic_cast<CallExpr *>(expr)) {
+    // For generic calls, check the template's return type
+    if (!call->type_args.empty()) {
+      auto it = generic_templates.find(call->callee);
+      if (it != generic_templates.end()) {
+        TypeAnnotation ret = it->second->return_type;
+        // Substitute type params in the return type
+        for (size_t i = 0; i < it->second->type_params.size() && i < call->type_args.size(); i++) {
+          if (ret.kind == TypeKind::TypeParam && ret.struct_name == it->second->type_params[i]) {
+            ret = call->type_args[i];
+            break;
+          }
+        }
+        return ret;
+      }
+      return {TypeKind::Void};
+    }
+    // For non-generic calls, try to find the LLVM function
+    Function *f = M.getFunction(call->callee);
+    if (f) {
+      Type *ret_type = f->getReturnType();
+      // Map LLVM type back to TypeKind (best-effort)
+      if (ret_type->isIntegerTy(1)) return {TypeKind::Bool};
+      if (ret_type->isIntegerTy(8)) return {TypeKind::Int8};
+      if (ret_type->isIntegerTy(32)) return {TypeKind::Int32};
+      if (ret_type->isIntegerTy(64)) return {TypeKind::Int64};
+      if (ret_type->isHalfTy()) return {TypeKind::Float16};
+      if (ret_type->isFloatTy()) return {TypeKind::Float32};
+      if (ret_type->isDoubleTy()) return {TypeKind::Float64};
+      if (ret_type->isPointerTy()) return {TypeKind::String};
+      if (ret_type->isStructTy()) {
+        // Check if it's a named struct (struct or enum)
+        if (auto *st = dyn_cast<StructType>(ret_type)) {
+          if (st->hasName())
+            return {TypeKind::Struct, 0, 0, std::string(st->getName())};
+        }
+        return {TypeKind::Void};
+      }
+    }
     return {TypeKind::Void};
   }
   return {TypeKind::Void};
@@ -362,6 +409,18 @@ bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
         return false;
       }
 
+      // Generic functions are stored as AST templates and monomorphized
+      // on demand at call sites.
+      if (!fn->type_params.empty()) {
+        if (fn->is_extern) {
+          errs() << "Error: extern function '" << fn->name
+                 << "' cannot be generic\n";
+          return false;
+        }
+        generic_templates[fn->name] = fn;
+        continue;
+      }
+
       std::vector<Type *> param_types;
       for (auto &p : fn->params)
         param_types.push_back(get_llvm_type(p.type_ann));
@@ -491,6 +550,185 @@ bool CodeGen::gen_main_body(const std::vector<std::unique_ptr<Decl>> &decls) {
     Builder.CreateRet(truncated);
   }
   return true;
+}
+
+// -------------------------------------------------------------------------
+// Generics / monomorphization helpers
+// -------------------------------------------------------------------------
+
+static std::string type_ann_to_string(const TypeAnnotation &ann) {
+  switch (ann.kind) {
+    case TypeKind::Void:    return "void";
+    case TypeKind::Int8:    return "i8";
+    case TypeKind::Int32:   return "i32";
+    case TypeKind::Int64:   return "i64";
+    case TypeKind::Float16: return "f16";
+    case TypeKind::Float32: return "f32";
+    case TypeKind::Float64: return "f64";
+    case TypeKind::Bool:    return "bool";
+    case TypeKind::String:  return "str";
+    case TypeKind::Cubical: return "cub";
+    case TypeKind::Struct:
+    case TypeKind::TypeParam: {
+      std::string s = ann.struct_name;
+      for (auto &c : s) if (c == ':') c = '_';
+      return s;
+    }
+  }
+  return "?";
+}
+
+static std::string mangle_ann(const TypeAnnotation &ann) {
+  std::string s = type_ann_to_string(ann);
+  for (int i = 0; i < ann.pointer_depth; i++)
+    s += "p";
+  if (ann.array_size > 0)
+    s += "a" + std::to_string(ann.array_size);
+  return s;
+}
+
+std::string CodeGen::mangle_name(const std::string &fn_name,
+                                  const std::vector<TypeAnnotation> &type_args) {
+  std::string result = fn_name;
+  for (auto &ta : type_args)
+    result += "$" + mangle_ann(ta);
+  return result;
+}
+
+void CodeGen::substitute_type_params(TypeAnnotation &ann,
+                                      const std::vector<std::string> &param_names,
+                                      const std::vector<TypeAnnotation> &type_args) {
+  if (ann.kind == TypeKind::TypeParam) {
+    for (size_t i = 0; i < param_names.size(); i++) {
+      if (ann.struct_name == param_names[i]) {
+        ann = type_args[i];
+        return;
+      }
+    }
+    errs() << "Internal error: unresolved type parameter '" << ann.struct_name << "'\n";
+  }
+}
+
+bool CodeGen::monomorphize_and_codegen(FnDecl *template_decl,
+                                        const std::vector<TypeAnnotation> &type_args,
+                                        const std::string &mangled_name) {
+  // Save all TypeAnnotations that reference type parameters so we can
+  // temporarily substitute them and restore after codegen.
+  std::vector<std::pair<TypeAnnotation *, TypeAnnotation>> saved_anns;
+
+  auto substitute_in = [&](TypeAnnotation &ann) {
+    if (ann.kind == TypeKind::TypeParam) {
+      saved_anns.push_back({&ann, ann});
+      for (size_t i = 0; i < template_decl->type_params.size(); i++) {
+        if (ann.struct_name == template_decl->type_params[i]) {
+          ann = type_args[i];
+          break;
+        }
+      }
+    }
+  };
+
+  // Walk params
+  for (auto &p : template_decl->params)
+    substitute_in(p.type_ann);
+
+  // Walk return type
+  substitute_in(template_decl->return_type);
+
+  // Walk body statements recursively
+  std::function<void(std::vector<std::unique_ptr<Stmt>>&)> walk_body;
+  std::function<void(Expr*)> walk_expr;
+  walk_expr = [&](Expr *expr) {
+    if (!expr) return;
+    if (auto *call = dynamic_cast<CallExpr *>(expr)) {
+      for (auto &ta : call->type_args)
+        substitute_in(ta);
+      for (auto &arg : call->args)
+        walk_expr(arg.get());
+    } else if (auto *bin = dynamic_cast<BinaryExpr *>(expr)) {
+      walk_expr(bin->left.get());
+      walk_expr(bin->right.get());
+    } else if (auto *unary = dynamic_cast<UnaryExpr *>(expr)) {
+      walk_expr(unary->operand.get());
+    } else if (auto *assign = dynamic_cast<AssignExpr *>(expr)) {
+      walk_expr(assign->target.get());
+      walk_expr(assign->value.get());
+    } else if (auto *compound = dynamic_cast<CompoundAssignExpr *>(expr)) {
+      walk_expr(compound->target.get());
+      walk_expr(compound->value.get());
+    } else if (auto *field = dynamic_cast<FieldAccessExpr *>(expr)) {
+      walk_expr(field->object.get());
+    } else if (auto *deref = dynamic_cast<DerefExpr *>(expr)) {
+      walk_expr(deref->operand.get());
+    } else if (auto *addr = dynamic_cast<AddressOfExpr *>(expr)) {
+      walk_expr(addr->operand.get());
+    } else if (auto *sub = dynamic_cast<SubscriptExpr *>(expr)) {
+      walk_expr(sub->array.get());
+      walk_expr(sub->index.get());
+    } else if (auto *arr = dynamic_cast<ArrayLitExpr *>(expr)) {
+      for (auto &el : arr->elements)
+        walk_expr(el.get());
+    } else if (auto *ctor = dynamic_cast<ConstructorExpr *>(expr)) {
+      for (auto &[_, fexpr] : ctor->fields)
+        walk_expr(fexpr.get());
+    } else if (auto *match = dynamic_cast<MatchExpr *>(expr)) {
+      walk_expr(match->value.get());
+    } else if (auto *ret = dynamic_cast<ReturnStmt *>(expr)) {
+      // Special case: ReturnStmt is a Stmt, not an Expr
+    }
+  };
+  walk_body = [&](std::vector<std::unique_ptr<Stmt>> &body) {
+    for (auto &stmt : body) {
+      if (auto *let = dynamic_cast<LetStmt *>(stmt.get())) {
+        substitute_in(let->type_ann);
+        walk_expr(let->init_expr.get());
+      } else if (auto *exprs = dynamic_cast<ExprStmt *>(stmt.get())) {
+        walk_expr(exprs->expr.get());
+      } else if (auto *ret = dynamic_cast<ReturnStmt *>(stmt.get())) {
+        walk_expr(ret->value.get());
+      } else if (auto *ifs = dynamic_cast<IfStmt *>(stmt.get())) {
+        walk_expr(ifs->condition.get());
+        walk_body(ifs->then_branch);
+        walk_body(ifs->else_branch);
+      } else if (auto *for_s = dynamic_cast<ForStmt *>(stmt.get())) {
+        walk_expr(for_s->condition.get());
+        walk_expr(for_s->update.get());
+        walk_body(for_s->body);
+      }
+    }
+  };
+  walk_body(template_decl->body);
+
+  // Create the LLVM function with substituted types
+  std::vector<Type *> param_types;
+  for (auto &p : template_decl->params)
+    param_types.push_back(get_llvm_type(p.type_ann));
+
+  FunctionType *FT = FunctionType::get(
+      get_llvm_type(template_decl->return_type), param_types,
+      template_decl->is_variadic);
+  Function::Create(FT, Function::ExternalLinkage, mangled_name, &M);
+
+  // Save named state and codegen the body with the template (now substituted)
+  auto saved_named_values = named_values;
+  auto saved_named_types = named_types;
+  auto saved_named_type_anns = named_type_anns;
+  auto saved_insert_block = Builder.GetInsertBlock();
+
+  bool ok = gen_fn_body(template_decl, M.getFunction(mangled_name));
+
+  // Restore Builder insert point and named state
+  if (saved_insert_block)
+    Builder.SetInsertPoint(saved_insert_block);
+  named_values = std::move(saved_named_values);
+  named_types = std::move(saved_named_types);
+  named_type_anns = std::move(saved_named_type_anns);
+
+  // Restore saved type annotations on the template
+  for (auto &[ptr, saved] : saved_anns)
+    *ptr = saved;
+
+  return ok;
 }
 
 // -------------------------------------------------------------------------
@@ -930,7 +1168,27 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
   }
 
   if (auto *call = dynamic_cast<CallExpr *>(expr)) {
-    Function *callee = M.getFunction(call->callee);
+    // Determine the actual callee name (possibly mangled for generics)
+    std::string actual_callee = call->callee;
+    if (!call->type_args.empty()) {
+      actual_callee = mangle_name(call->callee, call->type_args);
+      // Check if we need to monomorphize
+      if (!M.getFunction(actual_callee)) {
+        auto it = generic_templates.find(call->callee);
+        if (it == generic_templates.end()) {
+          errs() << "Error: '" << call->callee << "' is not a generic function\n";
+          return nullptr;
+        }
+        if (call->type_args.size() != it->second->type_params.size()) {
+          errs() << "Error: wrong number of type arguments for '" << call->callee << "'\n";
+          return nullptr;
+        }
+        if (!monomorphize_and_codegen(it->second, call->type_args, actual_callee))
+          return nullptr;
+      }
+    }
+
+    Function *callee = M.getFunction(actual_callee);
     if (!callee) {
       errs() << "Error: undefined function '" << call->callee << "'\n";
       return nullptr;

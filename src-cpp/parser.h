@@ -79,6 +79,7 @@ private:
   std::unique_ptr<Expr> parse_primary();
   std::unique_ptr<Expr> parse_postfix(std::unique_ptr<Expr> left);
   std::unique_ptr<Expr> parse_call_rest(const std::string &name);
+  std::unique_ptr<Expr> parse_turbofish_call(const std::string &name);
   std::unique_ptr<Expr> parse_array_literal();
   std::unique_ptr<Expr> parse_match_expr();
 
@@ -89,6 +90,9 @@ private:
   // constructors from other identifier + { patterns (e.g. match arm patterns).
   std::unordered_set<std::string> known_variants;
   std::unordered_set<std::string> known_structs;
+
+  // Names of type parameters in scope (for generic function bodies).
+  std::unordered_set<std::string> type_param_names;
 
   // Shared let helper
   bool parse_let_common(TypeAnnotation &ann, std::string &name,

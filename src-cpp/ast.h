@@ -21,6 +21,7 @@ enum class TypeKind {
   Cubical,
   Struct,
   Enum,
+  TypeParam,
 };
 
 struct TypeAnnotation {
@@ -77,6 +78,7 @@ struct BinaryExpr : Expr {
 struct CallExpr : Expr {
   std::string callee;
   std::vector<std::unique_ptr<Expr>> args;
+  std::vector<TypeAnnotation> type_args;
 };
 
 struct AsmExpr : Expr {
@@ -254,4 +256,6 @@ struct FnDecl : Decl {
   // Whether the parameter list ends in `...` (a C-style variadic function,
   // e.g. printf). Only meaningful when is_extern is true.
   bool is_variadic = false;
+  // Generic type parameter names, e.g. ["T", "U"] for `fn foo<T, U>(...)`.
+  std::vector<std::string> type_params;
 };

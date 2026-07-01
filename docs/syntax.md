@@ -6,6 +6,7 @@
 - [Types](#types)
 - [Variables](#variables)
 - [Functions](#functions)
+- [Generic functions](#generic-functions)
 - [Return](#return)
 - [If / Else](#if--else)
 - [For loop](#for-loop)
@@ -13,6 +14,7 @@
 - [Pointers](#pointers)
 - [Comparison operators](#comparison-operators)
 - [Logical operators](#logical-operators)
+- [Bitwise operators](#bitwise-operators)
 - [Arithmetic operators](#arithmetic-operators)
 - [Shift operators](#shift-operators)
 - [Function calls](#function-calls)
@@ -124,6 +126,46 @@ fn main(argc: int, argv: int8**) -> int { ... } // argc / argv
 
 If a function falls off the end of its body without an explicit `return`, it returns a zero value
 of its declared type.
+
+## Generic functions
+
+Generic functions are parameterized over one or more type parameters, written in angle brackets
+after the function name:
+
+```
+fn id<T>(x: T) -> T {
+  return x
+}
+
+fn pair<T, U>(x: T, y: U) -> T {
+  return x
+}
+```
+
+Type parameters follow the same naming rules as variables (any identifier) and are in scope
+throughout the parameter types, return type, and function body. They are not inferred — every call
+site must provide explicit type arguments using the turbofish `::<` syntax:
+
+```
+let a: int = id::<int>(42)
+let b: float64 = id::<float64>(3.14)
+let c: int = pair::<int, float64>(10, 2.5)
+```
+
+Namespaced generic calls work the same way:
+
+```
+namespace util {
+  fn id<T>(x: T) -> T { return x }
+}
+
+let a: int = util::id::<int>(42)
+```
+
+Each unique combination of type arguments produces a separate monomorphized copy of the function
+at compile time. Only explicit `::<T>` calls trigger monomorphization — there is no type
+inference. Only functions can be generic (structs, enums, and top-level `let`s cannot have type
+parameters).
 
 ## Return
 

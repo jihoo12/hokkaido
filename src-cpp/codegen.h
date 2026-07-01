@@ -38,6 +38,11 @@ class CodeGen {
   // Enum variant info: enum name -> vector of (variant_name, fields_vector)
   std::map<std::string, std::vector<std::pair<std::string, std::vector<StructField>>>> enum_variants;
 
+  // Generic function templates (name -> AST)
+  std::map<std::string, FnDecl *> generic_templates;
+  // Monomorphized instantiations (mangled_name -> cloned FnDecl)
+  std::map<std::string, std::unique_ptr<FnDecl>> monomorphized_fns;
+
 public:
   CodeGen(llvm::LLVMContext &Ctx, llvm::Module &Mod, llvm::IRBuilder<> &Bld,
           bool Freestanding = false)
@@ -116,4 +121,14 @@ private:
                                   const TypeAnnotation &val_ann);
   bool gen_pattern_bind(Pattern *pat, llvm::Value *val,
                          const TypeAnnotation &val_ann);
+
+  // Generics / monomorphization helpers
+  std::string mangle_name(const std::string &fn_name,
+                           const std::vector<TypeAnnotation> &type_args);
+  void substitute_type_params(TypeAnnotation &ann,
+                               const std::vector<std::string> &param_names,
+                               const std::vector<TypeAnnotation> &type_args);
+  bool monomorphize_and_codegen(FnDecl *template_decl,
+                                 const std::vector<TypeAnnotation> &type_args,
+                                 const std::string &mangled_name);
 };
