@@ -3,6 +3,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "ast.h"
@@ -49,6 +50,7 @@ private:
   std::unique_ptr<FnDecl> parse_fn_decl();
   std::unique_ptr<FnDecl> parse_extern_fn_decl();
   std::unique_ptr<StructDecl> parse_struct_decl();
+  std::unique_ptr<AdtDecl> parse_enum_decl();
   bool parse_include_decl(std::vector<std::unique_ptr<Decl>> &decls);
   bool parse_namespace_decl(std::vector<std::unique_ptr<Decl>> &decls);
   TypeAnnotation parse_type_annotation();
@@ -79,6 +81,11 @@ private:
 
   // Patterns
   std::unique_ptr<Pattern> parse_pattern();
+
+  // Set of known enum variant names and struct names — used to distinguish
+  // constructors from other identifier + { patterns (e.g. match arm patterns).
+  std::unordered_set<std::string> known_variants;
+  std::unordered_set<std::string> known_structs;
 
   // Shared let helper
   bool parse_let_common(TypeAnnotation &ann, std::string &name,

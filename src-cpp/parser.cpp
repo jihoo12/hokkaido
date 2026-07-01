@@ -39,6 +39,10 @@ std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
       auto decl = parse_struct_decl();
       if (decl) decls.push_back(std::move(decl));
       else break;
+    } else if (cur_tok.type == TokenType::Enum) {
+      auto decl = parse_enum_decl();
+      if (decl) decls.push_back(std::move(decl));
+      else break;
     } else if (cur_tok.type == TokenType::Include) {
       if (!parse_include_decl(decls)) break;
     } else if (cur_tok.type == TokenType::Namespace) {
@@ -48,7 +52,7 @@ std::vector<std::unique_ptr<Decl>> Parser::parse_program() {
       if (decl) decls.push_back(std::move(decl));
       else break;
     } else {
-      set_error("expected declaration (let, fn, struct, include, namespace, extern)");
+      set_error("expected declaration (let, fn, struct, enum, include, namespace, extern)");
       break;
     }
     skip_newlines();
@@ -182,6 +186,10 @@ std::unique_ptr<StructDecl> Parser::parse_struct_decl() {
 
     fields.push_back(std::move(field));
     skip_newlines();
+    if (cur_tok.type == TokenType::Comma) {
+      next_token();
+      skip_newlines();
+    }
   }
 
   if (cur_tok.type != TokenType::RBrace) {
@@ -192,7 +200,96 @@ std::unique_ptr<StructDecl> Parser::parse_struct_decl() {
 
   auto decl = std::make_unique<StructDecl>();
   decl->name = name;
+  known_structs.insert(name);
   decl->fields = std::move(fields);
+  return decl;
+}
+
+// -------------------------------------------------------------------------
+// Enum declarations
+// -------------------------------------------------------------------------
+
+std::unique_ptr<AdtDecl> Parser::parse_enum_decl() {
+  next_token(); // consume 'enum'
+
+  if (cur_tok.type != TokenType::Identifier) {
+    set_error("expected enum name");
+    return nullptr;
+  }
+  std::string name = cur_tok.text;
+  next_token();
+
+  skip_newlines();
+  if (cur_tok.type != TokenType::LBrace) {
+    set_error("expected '{' after enum name");
+    return nullptr;
+  }
+  next_token(); // consume '{'
+  skip_newlines();
+
+  std::vector<AdtVariant> variants;
+  while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
+    AdtVariant variant;
+    if (cur_tok.type != TokenType::Identifier) {
+      set_error("expected variant name");
+      return nullptr;
+    }
+    variant.name = cur_tok.text;
+    known_variants.insert(cur_tok.text);
+    next_token();
+    skip_newlines();
+
+    // Variant with fields: Some { x: int, y: int }
+    if (cur_tok.type == TokenType::LBrace) {
+      next_token(); // consume '{'
+      skip_newlines();
+      while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
+        StructField field;
+        if (cur_tok.type != TokenType::Identifier) {
+          set_error("expected field name in variant");
+          return nullptr;
+        }
+        field.name = cur_tok.text;
+        next_token();
+        if (cur_tok.type != TokenType::Colon) {
+          set_error("expected ':' after field name");
+          return nullptr;
+        }
+        next_token();
+        field.type_ann = parse_type_annotation();
+        if (has_error) return nullptr;
+        variant.fields.push_back(std::move(field));
+        skip_newlines();
+        if (cur_tok.type == TokenType::Comma) {
+          next_token();
+          skip_newlines();
+        }
+      }
+      if (cur_tok.type != TokenType::RBrace) {
+        set_error("expected '}' to close variant fields");
+        return nullptr;
+      }
+      next_token(); // consume '}'
+    }
+    // else: unit variant (no fields)
+
+    variants.push_back(std::move(variant));
+    skip_newlines();
+    if (cur_tok.type == TokenType::Comma) {
+      next_token();
+      skip_newlines();
+    }
+  }
+
+  if (cur_tok.type != TokenType::RBrace) {
+    set_error("expected '}' after enum variants");
+    return nullptr;
+  }
+  next_token(); // consume '}'
+
+  auto decl = std::make_unique<AdtDecl>();
+  decl->name = name;
+  decl->variants = std::move(variants);
   return decl;
 }
 
@@ -243,12 +340,16 @@ bool Parser::parse_namespace_decl(std::vector<std::unique_ptr<Decl>> &decls) {
       auto decl = parse_struct_decl();
       if (!decl) return false;
       inner_decls.push_back(std::move(decl));
+    } else if (cur_tok.type == TokenType::Enum) {
+      auto decl = parse_enum_decl();
+      if (!decl) return false;
+      inner_decls.push_back(std::move(decl));
     } else if (cur_tok.type == TokenType::Include) {
       if (!parse_include_decl(inner_decls)) return false;
     } else if (cur_tok.type == TokenType::Namespace) {
       if (!parse_namespace_decl(inner_decls)) return false;
     } else {
-      set_error("expected declaration inside namespace (let, fn, struct, include, namespace)");
+      set_error("expected declaration inside namespace (let, fn, struct, enum, include, namespace)");
       return false;
     }
     skip_newlines();
@@ -267,6 +368,8 @@ bool Parser::parse_namespace_decl(std::vector<std::unique_ptr<Decl>> &decls) {
       let->name = ns_name + "::" + let->name;
     } else if (auto *st = dynamic_cast<StructDecl *>(d.get())) {
       st->name = ns_name + "::" + st->name;
+    } else if (auto *adt = dynamic_cast<AdtDecl *>(d.get())) {
+      adt->name = ns_name + "::" + adt->name;
     }
     decls.push_back(std::move(d));
   }
@@ -609,6 +712,7 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
       cur_tok.type == TokenType::Identifier ||
       cur_tok.type == TokenType::Asm ||
       cur_tok.type == TokenType::Match ||
+      cur_tok.type == TokenType::Enum ||
       cur_tok.type == TokenType::LParen ||
       cur_tok.type == TokenType::LSquare ||
       cur_tok.type == TokenType::Minus ||
@@ -879,6 +983,46 @@ std::unique_ptr<Expr> Parser::parse_postfix(std::unique_ptr<Expr> left) {
     std::string field = cur_tok.text;
     next_token();
     left = std::make_unique<FieldAccessExpr>(std::move(left), field);
+  }
+  // Handle constructor expression: VariantName { field: expr, ... }
+  if (cur_tok.type == TokenType::LBrace) {
+    auto *ident = dynamic_cast<IdentExpr *>(left.get());
+    if (ident && (known_variants.count(ident->name) > 0 || known_structs.count(ident->name) > 0)) {
+      std::string variant_name = ident->name;
+      next_token(); // consume '{'
+      skip_newlines();
+      auto ctor = std::make_unique<ConstructorExpr>();
+      ctor->variant_name = variant_name;
+      while (cur_tok.type != TokenType::RBrace && cur_tok.type != TokenType::Eof) {
+        if (cur_tok.type != TokenType::Identifier) {
+          set_error("expected field name in constructor");
+          return nullptr;
+        }
+        std::string field_name = cur_tok.text;
+        next_token();
+        skip_newlines();
+        if (cur_tok.type != TokenType::Colon) {
+          set_error("expected ':' after field name in constructor");
+          return nullptr;
+        }
+        next_token();
+        skip_newlines();
+        auto field_val = parse_expr();
+        if (!field_val) return nullptr;
+        ctor->fields.push_back({field_name, std::move(field_val)});
+        skip_newlines();
+        if (cur_tok.type == TokenType::Comma) {
+          next_token();
+          skip_newlines();
+        }
+      }
+      if (cur_tok.type != TokenType::RBrace) {
+        set_error("expected '}' to close constructor");
+        return nullptr;
+      }
+      next_token(); // consume '}'
+      return ctor;
+    }
   }
   return left;
 }

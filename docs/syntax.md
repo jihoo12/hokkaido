@@ -19,6 +19,7 @@
 - [Match](#match)
 - [Arrays](#arrays)
 - [Structs](#structs)
+- [Enums](#enums)
 - [Namespaces](#namespaces)
 - [Include](#include)
 - [C FFI](#c-ffi)
@@ -51,7 +52,7 @@ void        No return value (functions only)
 cubical     Compile-time evaluated cubical expression (see Cubical)
 ```
 
-A struct name is also a valid type (see [Structs](#structs)).
+A struct name is also a valid type (see [Structs](#structs)), and an enum name is a valid type (see [Enums](#enums)).
 
 Pointer types are written with one `*` per level of indirection:
 
@@ -284,7 +285,13 @@ _                           Wildcard — matches anything, binds nothing
 name                        Variable — matches anything, binds the value to name
 Point { x: 0, y: _ }        Struct — matches fields against sub-patterns
 Point { x, y }              Struct — shorthand for `Point { x: x, y: y }`
+Some { value }              Enum variant — matches a variant with fields (shorthand)
+None                        Enum unit variant — matches a unit variant by name
 ```
+
+`match` works on any type, including integers, structs, and enums. When matching an enum,
+the compiler checks the variant tag (discriminant) at runtime and branches to the matching
+arm. Enum variant patterns use the same syntax as struct patterns.
 
 ### Examples
 
@@ -340,10 +347,15 @@ p.x = 10
 p.y = 20
 ```
 
-Struct fields are declared one per line (no commas, no trailing separator). A struct variable is
-initialized by evaluating the expression on the right of `=` — any expression returning the
-struct type is accepted. If the expression is a single undeclared identifier (conventionally the
-struct's own name), it is treated as a placeholder and the struct is zero-initialized.
+Struct fields are declared one per line (separated by commas or newlines). A struct literal is
+written with the struct name and a brace-enclosed list of `field: value` pairs, separated by commas:
+
+```
+let p: Point = Point { x: 10, y: 20 }
+let q: Point = q                              // placeholder: zero-initialized
+```
+
+Struct literals can also be created by any expression returning the struct type.
 
 Field access works on any expression that evaluates to a struct, including chained access,
 dereference, and array subscript:
@@ -356,6 +368,58 @@ arr[i].field                  array element then field access
 
 Structs are passed and returned by value (like C). Passing a struct to a function copies the
 entire struct; returning a struct returns a copy.
+
+## Enums
+
+```
+enum Option {
+  Some { value: int },
+  None,
+}
+
+let x: Option = Some { value: 42 }
+```
+
+Enums are algebraic data types with one or more named variants. Each variant can have named
+fields (struct-like) or be a unit variant (no fields). The enum name becomes a type; variant
+names serve as constructors.
+
+### Enum constructors
+
+```
+let x: Option = Some { value: 42 }
+let y: Option = None
+```
+
+Constructor expressions use the variant name followed by `{ field: expr, ... }` for variants
+with fields, or just the variant name for unit variants. Field order is not significant at
+the value level (the compiler stores them in declaration order).
+
+### Matching on enums
+
+```
+return match x {
+  Some { value } => value,
+  None => 0,
+}
+```
+
+Match arms can destructure enum variants using the same syntax as struct patterns. The
+compiler emits a tag check (discriminant) at runtime, branching to the appropriate arm.
+Shorthand field patterns (`Some { value }` binds the field named `value`) work the same way
+as in struct patterns.
+
+### Nested types
+
+Enums can contain structs, other enums, or any other type as field types. Structs, arrays,
+and pointers can all appear as enum variant fields:
+
+```
+enum Container {
+  HasPoint { pt: Pair, label: int },
+  Empty,
+}
+```
 
 ## Namespaces
 

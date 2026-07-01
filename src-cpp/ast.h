@@ -20,6 +20,7 @@ enum class TypeKind {
   String,
   Cubical,
   Struct,
+  Enum,
 };
 
 struct TypeAnnotation {
@@ -137,6 +138,12 @@ struct StructPattern : Pattern {
   std::vector<std::pair<std::string, std::unique_ptr<Pattern>>> fields;
 };
 
+struct VariantPattern : Pattern {
+  std::string enum_name;
+  std::string variant_name;
+  std::vector<std::pair<std::string, std::unique_ptr<Pattern>>> fields;
+};
+
 struct MatchArm {
   std::unique_ptr<Pattern> pattern;
   std::unique_ptr<Expr> expr;
@@ -165,6 +172,24 @@ struct StructField {
 struct StructDecl : Decl {
   std::string name;
   std::vector<StructField> fields;
+};
+
+// Algebraic data types (tagged unions / Rust-style enums)
+
+struct AdtVariant {
+  std::string name;
+  std::vector<StructField> fields;
+};
+
+struct AdtDecl : Decl {
+  std::string name;
+  std::vector<AdtVariant> variants;
+};
+
+struct ConstructorExpr : Expr {
+  std::string enum_name;
+  std::string variant_name;
+  std::vector<std::pair<std::string, std::unique_ptr<Expr>>> fields;
 };
 
 struct Param {

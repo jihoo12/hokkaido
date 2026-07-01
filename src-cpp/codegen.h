@@ -33,6 +33,11 @@ class CodeGen {
   // Struct field types (name -> vector of (field_name, annotation))
   std::map<std::string, std::vector<std::pair<std::string, TypeAnnotation>>> struct_fields;
 
+  // Registered enum types (name -> LLVM struct type)
+  std::map<std::string, llvm::StructType *> enum_types;
+  // Enum variant info: enum name -> vector of (variant_name, fields_vector)
+  std::map<std::string, std::vector<std::pair<std::string, std::vector<StructField>>>> enum_variants;
+
 public:
   CodeGen(llvm::LLVMContext &Ctx, llvm::Module &Mod, llvm::IRBuilder<> &Bld,
           bool Freestanding = false)
@@ -55,6 +60,12 @@ private:
   llvm::StructType *get_struct_type(const std::string &name);
   int get_struct_field_index(const std::string &struct_name, const std::string &field_name);
   TypeAnnotation get_struct_field_type(const std::string &struct_name, const std::string &field_name);
+
+  // Enum declarations
+  void register_enum_decl(AdtDecl *decl);
+  int get_enum_variant_index(const std::string &enum_name, const std::string &variant_name);
+  const std::vector<StructField> *get_enum_variant_fields(
+      const std::string &enum_name, const std::string &variant_name);
 
   // Resolve the type annotation for an expression without evaluating it
   TypeAnnotation resolve_expr_type(Expr *expr);

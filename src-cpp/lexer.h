@@ -9,7 +9,7 @@
 enum class TokenType {
   Eof,
   Let, Fn, Return, Asm, If, Else, For, Struct, Include, Namespace, Extern,
-  Match,
+  Match, Enum,
   Null,
   Cubical,
   Int8, Int32, Int64, Float16, Float32, Float64, Bool, String, Void,

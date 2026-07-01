@@ -39,8 +39,27 @@ Type *CodeGen::get_llvm_type(const TypeAnnotation &ann) {
   Type *base = nullptr;
   if (ann.kind == TypeKind::Struct) {
     auto it = struct_types.find(ann.struct_name);
-    if (it == struct_types.end()) {
-      errs() << "Error: unknown struct type '" << ann.struct_name << "'\n";
+    if (it != struct_types.end()) {
+      base = it->second;
+      for (int i = 0; i < ann.pointer_depth; i++)
+        base = PointerType::getUnqual(Context);
+      return base;
+    }
+    // Fallback: check enum types
+    auto eit = enum_types.find(ann.struct_name);
+    if (eit != enum_types.end()) {
+      base = eit->second;
+      for (int i = 0; i < ann.pointer_depth; i++)
+        base = PointerType::getUnqual(Context);
+      return base;
+    }
+    errs() << "Error: unknown struct/enum type '" << ann.struct_name << "'\n";
+    return nullptr;
+  }
+  if (ann.kind == TypeKind::Enum) {
+    auto it = enum_types.find(ann.struct_name);
+    if (it == enum_types.end()) {
+      errs() << "Error: unknown enum type '" << ann.struct_name << "'\n";
       return nullptr;
     }
     base = it->second;
@@ -149,6 +168,18 @@ TypeAnnotation CodeGen::resolve_expr_type(Expr *expr) {
   }
   if (dynamic_cast<NumberExpr *>(expr))
     return {TypeKind::Int64};
+  if (auto *ctor = dynamic_cast<ConstructorExpr *>(expr)) {
+    // Find which enum this variant belongs to
+    for (auto &[ename, _] : enum_types) {
+      int vi = get_enum_variant_index(ename, ctor->variant_name);
+      if (vi >= 0)
+        return {TypeKind::Enum, 0, 0, ename};
+    }
+    // Fallback: check if it's a struct constructor
+    if (struct_types.count(ctor->variant_name) > 0)
+      return {TypeKind::Struct, 0, 0, ctor->variant_name};
+    return {TypeKind::Void};
+  }
   return {TypeKind::Void};
 }
 
@@ -252,14 +283,62 @@ TypeAnnotation CodeGen::get_struct_field_type(const std::string &struct_name,
 }
 
 // -------------------------------------------------------------------------
+// Enum helpers
+// -------------------------------------------------------------------------
+
+void CodeGen::register_enum_decl(AdtDecl *decl) {
+  SmallVector<Type *, 8> member_types;
+  member_types.push_back(Type::getInt64Ty(Context));
+  for (auto &var : decl->variants) {
+    SmallVector<Type *, 4> field_types;
+    for (auto &f : var.fields) {
+      Type *ft = get_llvm_type(f.type_ann);
+      if (!ft) ft = Type::getInt64Ty(Context);
+      field_types.push_back(ft);
+    }
+    StructType *var_st = StructType::create(Context, field_types,
+                                            decl->name + "::" + var.name);
+    member_types.push_back(var_st);
+  }
+  StructType *st = StructType::create(Context, member_types, decl->name);
+  enum_types[decl->name] = st;
+
+  // Store variant field info in struct_fields for lookup
+  std::vector<std::pair<std::string, std::vector<StructField>>> var_list;
+  for (auto &var : decl->variants) {
+    std::vector<std::pair<std::string, TypeAnnotation>> fields_info;
+    std::vector<StructField> sf_list;
+    for (auto &f : var.fields) {
+      fields_info.push_back({f.name, f.type_ann});
+      sf_list.push_back({f.name, f.type_ann});
+    }
+    struct_fields[decl->name + "::" + var.name] = fields_info;
+    var_list.push_back({var.name, sf_list});
+  }
+  enum_variants[decl->name] = var_list;
+}
+
+int CodeGen::get_enum_variant_index(const std::string &enum_name,
+                                     const std::string &variant_name) {
+  auto it = enum_variants.find(enum_name);
+  if (it == enum_variants.end()) return -1;
+  for (size_t i = 0; i < it->second.size(); i++) {
+    if (it->second[i].first == variant_name) return (int)i;
+  }
+  return -1;
+}
+
+// -------------------------------------------------------------------------
 // Top-level generate
 // -------------------------------------------------------------------------
 
 bool CodeGen::generate(const std::vector<std::unique_ptr<Decl>> &decls) {
-  // Pass 0: register all struct types first
+  // Pass 0: register all struct and enum types first
   for (auto &decl : decls) {
     if (auto *sd = dynamic_cast<StructDecl *>(decl.get())) {
       register_struct_decl(sd);
+    } else if (auto *ed = dynamic_cast<AdtDecl *>(decl.get())) {
+      register_enum_decl(ed);
     }
   }
 
@@ -407,6 +486,82 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
 
   if (auto *null_expr = dynamic_cast<NullExpr *>(expr)) {
     return ConstantPointerNull::get(cast<PointerType>(expected_type));
+  }
+
+  // Constructor expression: VariantName { field: expr, ... }
+  if (auto *ctor = dynamic_cast<ConstructorExpr *>(expr)) {
+    // Check if this is an enum variant constructor
+    StructType *enum_st = nullptr;
+    std::string enum_name;
+    int variant_idx = -1;
+    for (auto &[ename, st] : enum_types) {
+      int idx = get_enum_variant_index(ename, ctor->variant_name);
+      if (idx >= 0) {
+        enum_st = st;
+        enum_name = ename;
+        variant_idx = idx;
+        break;
+      }
+    }
+    if (enum_st) {
+      // Enum variant constructor
+      Value *result = UndefValue::get(enum_st);
+      Type *tag_type = enum_st->getElementType(0);
+      result = Builder.CreateInsertValue(result,
+          ConstantInt::get(tag_type, variant_idx), {0});
+      StructType *var_type = cast<StructType>(enum_st->getElementType(1 + variant_idx));
+      Value *var_data = UndefValue::get(var_type);
+      for (size_t fi = 0; fi < ctor->fields.size(); fi++) {
+        auto &[field_name, field_expr] = ctor->fields[fi];
+        TypeAnnotation field_ann = get_struct_field_type(
+            enum_name + "::" + ctor->variant_name, field_name);
+        Type *field_type = get_llvm_type(field_ann);
+        if (!field_type) field_type = Type::getInt64Ty(Context);
+        int actual_idx = get_struct_field_index(
+            enum_name + "::" + ctor->variant_name, field_name);
+        if (actual_idx < 0) {
+          errs() << "Error: variant '" << ctor->variant_name
+                 << "' has no field '" << field_name << "'\n";
+          return nullptr;
+        }
+        Value *fv = eval_expr(field_expr.get(), field_type);
+        if (!fv) return nullptr;
+        var_data = Builder.CreateInsertValue(var_data, fv,
+            {(unsigned)actual_idx});
+      }
+      result = Builder.CreateInsertValue(result, var_data, {1 + (unsigned)variant_idx});
+      return result;
+    }
+
+    // Fallback: try as a struct constructor
+    auto st_it = struct_types.find(ctor->variant_name);
+    if (st_it != struct_types.end()) {
+      StructType *st = st_it->second;
+      Value *result = UndefValue::get(st);
+      for (size_t fi = 0; fi < ctor->fields.size(); fi++) {
+        auto &[field_name, field_expr] = ctor->fields[fi];
+        TypeAnnotation field_ann = get_struct_field_type(
+            ctor->variant_name, field_name);
+        Type *field_type = get_llvm_type(field_ann);
+        if (!field_type) field_type = Type::getInt64Ty(Context);
+        int actual_idx = get_struct_field_index(
+            ctor->variant_name, field_name);
+        if (actual_idx < 0) {
+          errs() << "Error: struct '" << ctor->variant_name
+                 << "' has no field '" << field_name << "'\n";
+          return nullptr;
+        }
+        Value *fv = eval_expr(field_expr.get(), field_type);
+        if (!fv) return nullptr;
+        result = Builder.CreateInsertValue(result, fv,
+            {(unsigned)actual_idx});
+      }
+      return result;
+    }
+
+    errs() << "Error: unknown variant '" << ctor->variant_name
+           << "' in constructor expression\n";
+    return nullptr;
   }
 
   if (auto *addr = dynamic_cast<AddressOfExpr *>(expr)) {
@@ -889,7 +1044,7 @@ bool CodeGen::alloc_and_store(const std::string &name, TypeKind kind,
   Builder.CreateStore(init, alloca);
   named_values[name] = alloca;
   named_types[name] = kind;
-  if (kind == TypeKind::Struct || ann.pointer_depth > 0)
+  if (kind == TypeKind::Struct || kind == TypeKind::Enum || ann.pointer_depth > 0)
     named_type_anns[name] = ann;
   return true;
 }
@@ -902,7 +1057,7 @@ bool CodeGen::alloc_and_store_array(const std::string &name, TypeKind kind,
   Builder.CreateStore(init, alloca);
   named_values[name] = alloca;
   named_types[name] = kind;
-  if (kind == TypeKind::Struct || ann.array_size > 0)
+  if (kind == TypeKind::Struct || kind == TypeKind::Enum || ann.array_size > 0)
     named_type_anns[name] = ann;
   return true;
 }
@@ -1100,7 +1255,7 @@ bool CodeGen::gen_fn_body(FnDecl *decl, Function *fn) {
     named_types[pname] = decl->params[i].type_ann.kind;
     {
       auto &ta = decl->params[i].type_ann;
-      if (ta.kind == TypeKind::Struct || ta.pointer_depth > 0 || ta.array_size > 0)
+      if (ta.kind == TypeKind::Struct || ta.kind == TypeKind::Enum || ta.pointer_depth > 0 || ta.array_size > 0)
         named_type_anns[pname] = ta;
     }
     i++;
@@ -1275,10 +1430,66 @@ Value *CodeGen::gen_pattern_check(Pattern *pat, Value *val,
   }
 
   if (auto *var = dynamic_cast<VariablePattern *>(pat)) {
+    // Check if this is a unit variant of an enum
+    bool is_enum = (val_ann.kind == TypeKind::Enum) ||
+                   (val_ann.kind == TypeKind::Struct &&
+                    enum_types.find(val_ann.struct_name) != enum_types.end());
+    if (is_enum) {
+      int vi = get_enum_variant_index(val_ann.struct_name, var->name);
+      if (vi >= 0) {
+        // Unit variant: check tag
+        Value *tag = Builder.CreateExtractValue(val, {0}, "tag");
+        return Builder.CreateICmpEQ(tag,
+            ConstantInt::get(Type::getInt64Ty(Context), vi));
+      }
+    }
     return ConstantInt::getTrue(Context);
   }
 
   if (auto *sp = dynamic_cast<StructPattern *>(pat)) {
+    // Check if this is actually an enum variant pattern
+    bool is_variant = (val_ann.kind == TypeKind::Enum) ||
+                      (val_ann.kind == TypeKind::Struct &&
+                       enum_types.find(val_ann.struct_name) != enum_types.end());
+    int variant_data_idx = -1;
+
+    if (is_variant) {
+      // Look up variant index within the enum
+      int vi = get_enum_variant_index(val_ann.struct_name, sp->struct_name);
+      if (vi < 0) {
+        errs() << "Error: '" << sp->struct_name << "' is not a variant of enum '"
+               << val_ann.struct_name << "'\n";
+        return nullptr;
+      }
+      variant_data_idx = 1 + vi; // index 0 = tag, 1..N = variant data
+
+      // First check the tag matches this variant
+      Value *tag = Builder.CreateExtractValue(val, {0}, "tag");
+      Value *tag_match = Builder.CreateICmpEQ(tag,
+          ConstantInt::get(Type::getInt64Ty(Context), vi));
+      Value *cond = tag_match;
+
+      // Then check field sub-patterns from the variant data
+      for (auto &[field_name, sub_pat] : sp->fields) {
+        int idx = get_struct_field_index(
+            val_ann.struct_name + "::" + sp->struct_name, field_name);
+        if (idx < 0) {
+          errs() << "Error: variant '" << sp->struct_name
+                 << "' has no field '" << field_name << "'\n";
+          return nullptr;
+        }
+        Value *field_val = Builder.CreateExtractValue(val,
+            {(unsigned)variant_data_idx, (unsigned)idx}, field_name);
+        TypeAnnotation field_ann = get_struct_field_type(
+            val_ann.struct_name + "::" + sp->struct_name, field_name);
+        Value *sub_cond = gen_pattern_check(sub_pat.get(), field_val, field_ann);
+        if (!sub_cond) return nullptr;
+        cond = Builder.CreateAnd(cond, sub_cond);
+      }
+      return cond;
+    }
+
+    // Regular struct pattern
     StructType *st = dyn_cast<StructType>(val->getType());
     if (!st) {
       errs() << "Error: struct pattern on non-struct value\n";
@@ -1324,11 +1535,34 @@ bool CodeGen::gen_pattern_bind(Pattern *pat, Value *val,
   }
 
   if (auto *sp = dynamic_cast<StructPattern *>(pat)) {
+    bool is_variant = (val_ann.kind == TypeKind::Enum) ||
+                      (val_ann.kind == TypeKind::Struct &&
+                       enum_types.find(val_ann.struct_name) != enum_types.end());
+    int variant_data_idx = -1;
+
+    if (is_variant) {
+      int vi = get_enum_variant_index(val_ann.struct_name, sp->struct_name);
+      if (vi < 0) return false;
+      variant_data_idx = 1 + vi;
+    }
+
     for (auto &[field_name, sub_pat] : sp->fields) {
-      int idx = get_struct_field_index(sp->struct_name, field_name);
-      if (idx < 0) return false;
-      Value *field_val = Builder.CreateExtractValue(val, {(unsigned)idx}, field_name);
-      TypeAnnotation field_ann = get_struct_field_type(sp->struct_name, field_name);
+      Value *field_val;
+      TypeAnnotation field_ann;
+      if (is_variant) {
+        int idx = get_struct_field_index(
+            val_ann.struct_name + "::" + sp->struct_name, field_name);
+        if (idx < 0) return false;
+        field_val = Builder.CreateExtractValue(val,
+            {(unsigned)variant_data_idx, (unsigned)idx}, field_name);
+        field_ann = get_struct_field_type(
+            val_ann.struct_name + "::" + sp->struct_name, field_name);
+      } else {
+        int idx = get_struct_field_index(sp->struct_name, field_name);
+        if (idx < 0) return false;
+        field_val = Builder.CreateExtractValue(val, {(unsigned)idx}, field_name);
+        field_ann = get_struct_field_type(sp->struct_name, field_name);
+      }
       if (!gen_pattern_bind(sub_pat.get(), field_val, field_ann))
         return false;
     }

@@ -226,6 +226,7 @@ Token Lexer::lex_identifier(int l, int c) {
   if (id == "else") return {TokenType::Else, id, 0, l, c};
   if (id == "for") return {TokenType::For, id, 0, l, c};
   if (id == "match") return {TokenType::Match, id, 0, l, c};
+  if (id == "enum") return {TokenType::Enum, id, 0, l, c};
   if (id == "null") return {TokenType::Null, id, 0, l, c};
   if (id == "cubical") return {TokenType::Cubical, id, 0, l, c};
   if (id == "int") return {TokenType::Int64, id, 0, l, c};
