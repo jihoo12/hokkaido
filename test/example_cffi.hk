@@ -5,6 +5,8 @@ extern fn free(ptr: int8*) -> void
 
 fn main() -> int {
   puts("hello from ffi")
-  printf("x = %d, y = %d\n", 1, 2)
+  for let i: int = 0; i< 10; i += 1 {
+      printf("x = %d, y = %d\n", 1, 2)
+  }
   return 0
 }
