@@ -228,16 +228,7 @@ Comparison operators have lower precedence than `>>`, which in turn binds looser
 ```
 
 `&&` and `||` operate on the same "nonzero is true" rule as `if` conditions, and produce an `int`
-(`1` or `0`) like the comparison operators. They are **not** short-circuiting — both operands are
-always evaluated, regardless of the left-hand result:
-
-```
-let a: bool = x > 0 && y > 0
-let b: bool = is_ready() || retry()    // retry() always runs, even if is_ready() is true
-```
-
-`||` binds looser than `&&`, which in turn binds looser than the comparison operators, so
-`a == 1 && b == 2 || c == 3` parses as `(a == 1 && b == 2) || (c == 3)`.
+(`1` or `0`) like the comparison operators.
 
 ## Arithmetic operators
 
@@ -255,6 +246,7 @@ binary operators.
 
 ```
 >>      Arithmetic right shift
+<<      Arithmetic left shift
 ```
 
 `a >> b` shifts `a` right by `b` bits, sign-extending (an arithmetic, not logical, shift — the

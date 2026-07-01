@@ -800,11 +800,12 @@ std::unique_ptr<Expr> Parser::parse_shift() {
   auto left = parse_additive();
   if (!left) return nullptr;
 
-  while (cur_tok.type == TokenType::Shr) {
+  while (cur_tok.type == TokenType::Shr || cur_tok.type == TokenType::Shl) {
+    BinOp op = (cur_tok.type == TokenType::Shr) ? BinOp::Shr : BinOp::Shl;
     next_token();
     auto right = parse_additive();
     if (!right) return nullptr;
-    left = std::make_unique<BinaryExpr>(std::move(left), BinOp::Shr, std::move(right));
+    left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
   }
   return left;
 }

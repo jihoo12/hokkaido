@@ -18,7 +18,7 @@ enum class TokenType {
   StringLiteral,
   Equals, Arrow, FatArrow,
   Eq, Ne, Less, Greater, LessEqual, GreaterEqual,
-  AndAnd, OrOr, Shr,
+  AndAnd, OrOr, Shr, Shl,
   Semicolon, Comma, Colon, ColonColon, Dot, Ellipsis,
   Newline,
   LParen, RParen, LBrace, RBrace,

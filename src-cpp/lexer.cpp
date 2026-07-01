@@ -115,6 +115,10 @@ Token Lexer::next_token() {
       advance(); advance();
       return {TokenType::LessEqual, "<=", 0, l, c};
     }
+    if (pos + 1 < input.size() && input[pos + 1] == '<') {
+      advance(); advance();
+      return {TokenType::Shl, "<<", 0, l, c};
+    }
     advance();
     return {TokenType::Less, "<", 0, l, c};
   }

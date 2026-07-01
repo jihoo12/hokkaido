@@ -658,13 +658,32 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
         return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
       }
       case BinOp::And: {
-        // Non-short-circuiting: both sides are always evaluated, same as
-        // every other binary operator here. Truthiness follows the same
-        // "nonzero" rule used for `if` conditions.
-        Value *lb = Builder.CreateICmpNE(l, ConstantInt::get(l->getType(), 0));
-        Value *rb = Builder.CreateICmpNE(r, ConstantInt::get(r->getType(), 0));
-        Value *cmp = Builder.CreateAnd(lb, rb);
-        return Builder.CreateZExt(cmp, Type::getInt64Ty(Context));
+        // Short-circuit: if l is 0 (falsy), skip evaluating r and return 0.
+        // If l is non-zero, evaluate r and return the truthiness of both.
+        Function *fn = Builder.GetInsertBlock()->getParent();
+        BasicBlock *rhs_bb = BasicBlock::Create(Context, "and.rhs", fn);
+        BasicBlock *merge_bb = BasicBlock::Create(Context, "and.merge", fn);
+
+        // Store the default result (0 for the false branch) before branching.
+        // The rhs_bb will overwrite this if l is truthy.
+        AllocaInst *result_alloca = Builder.CreateAlloca(Type::getInt64Ty(Context), nullptr, "and.result");
+        Builder.CreateStore(ConstantInt::get(Type::getInt64Ty(Context), 0), result_alloca);
+
+        Value *l_bool = Builder.CreateICmpNE(l, ConstantInt::get(l->getType(), 0));
+        Builder.CreateCondBr(l_bool, rhs_bb, merge_bb);
+
+        // Right-hand side block (only reached when l is truthy)
+        Builder.SetInsertPoint(rhs_bb);
+        Value *r_val = eval_expr(bin->right.get(), expected_type);
+        if (!r_val) return nullptr;
+        Value *r_bool = Builder.CreateICmpNE(r_val, ConstantInt::get(r_val->getType(), 0));
+        Value *r_ext = Builder.CreateZExt(r_bool, Type::getInt64Ty(Context));
+        Builder.CreateStore(r_ext, result_alloca);
+        Builder.CreateBr(merge_bb);
+
+        // Merge block: load the result (either 0 from the false path or r_ext from rhs_bb)
+        Builder.SetInsertPoint(merge_bb);
+        return Builder.CreateLoad(Type::getInt64Ty(Context), result_alloca);
       }
       case BinOp::Or: {
         Value *lb = Builder.CreateICmpNE(l, ConstantInt::get(l->getType(), 0));
@@ -674,6 +693,8 @@ Value *CodeGen::eval_expr(Expr *expr, Type *expected_type) {
       }
       case BinOp::Shr:
         return Builder.CreateAShr(l, r);
+      case BinOp::Shl:
+        return Builder.CreateShl(l, r);
     }
   }
 
